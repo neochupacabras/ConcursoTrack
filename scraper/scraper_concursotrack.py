@@ -120,9 +120,13 @@ class Concurso:
 # ---------------------------------------------------------------------------
 
 def extrair_vagas(texto: str) -> int:
-    padrao = re.search(r"([\d.,]+)\s*vaga", texto, re.IGNORECASE)
+    padrao = re.search(r"([\d][.\d]*[\d]|\d+)\s*vaga", texto, re.IGNORECASE)
     if padrao:
-        return int(re.sub(r"[.,]", "", padrao.group(1)))
+        num = padrao.group(1).replace(".", "").replace(",", "")
+        try:
+            return int(num)
+        except ValueError:
+            pass
     return 0
 
 def extrair_estado(texto: str) -> Optional[str]:
@@ -229,12 +233,19 @@ class PCIScraper:
         if not soup:
             return None
 
-        titulo_el = soup.select_one("h1")
-        if titulo_el:
-            titulo = titulo_el.get_text(strip=True)
+        # Título: og:title é mais confiável que h1 (o primeiro h1 é o logo do site)
+        meta_og = soup.find("meta", property="og:title")
+        if meta_og and meta_og.get("content"):
+            titulo = meta_og["content"].strip()
         else:
-            meta = soup.find("meta", property="og:title")
-            titulo = meta["content"] if meta else ""
+            # Fallback: pega h1 que NÃO seja o logo do PCI
+            for h1 in soup.select("h1"):
+                t = h1.get_text(strip=True)
+                if t and "pci concursos" not in t.lower() and len(t) > 10:
+                    titulo = t
+                    break
+            else:
+                titulo = ""
 
         if not titulo:
             return None
