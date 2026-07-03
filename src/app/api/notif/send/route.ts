@@ -22,8 +22,8 @@ export async function POST(request: Request) {
   const falhas:   string[] = []
 
   for (const notif of pendentes) {
-    const profile  = notif.profiles  as { email: string; nome: string | null } | null
-    const concurso = notif.concursos as {
+    const profile  = (Array.isArray(notif.profiles)  ? notif.profiles[0]  : notif.profiles)  as { email: string; nome: string | null } | null
+    const concurso = (Array.isArray(notif.concursos) ? notif.concursos[0] : notif.concursos) as {
       titulo: string; orgao: string; slug: string
       data_encerramento: string | null; total_vagas: number; area_conhecimento: string | null
     } | null
