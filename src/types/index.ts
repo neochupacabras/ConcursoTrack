@@ -48,8 +48,9 @@ export interface Concurso {
   scraped_em:  string | null
   criado_em:   string
   // relações opcionais (join)
-  bancas?:  Banca
-  cargos?:  Cargo[]
+  bancas?:            Banca
+  cargos?:            Cargo[]
+  provas_anteriores?: ProvaAnterior[]
 }
 
 export interface ProvaAnterior {
