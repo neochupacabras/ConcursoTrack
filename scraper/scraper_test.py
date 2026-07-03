@@ -1,7 +1,7 @@
 """
-ConcursoTrack — Scraper de TESTE v3
-Raspa a listagem /concursos/ do PCI diretamente.
-Roda em ~5 segundos. Sem banco de dados.
+ConcursoTrack — Scraper de TESTE v4
+Valida o parsing da listagem /concursos/ antes de rodar o completo.
+Sem banco de dados. Termina em ~5 segundos.
 """
 
 import re
@@ -14,6 +14,70 @@ HEADERS = {
 }
 
 URL = "https://www.pciconcursos.com.br/concursos/"
+UFS = {"AC","AL","AM","AP","BA","CE","DF","ES","GO","MA","MG","MS","MT",
+       "PA","PB","PE","PI","PR","RJ","RN","RO","RR","RS","SC","SE","SP","TO","BR"}
+
+
+def extrair_uf(title: str) -> str:
+    """Extrai UF do atributo title do link. Ex: 'IBGE - BR: ...' → 'BR'"""
+    m = re.search(r"-\s*([A-Z]{2})\s*[:–]", title)
+    if m and m.group(1) in UFS:
+        return m.group(1) if m.group(1) != "BR" else None
+    return None
+
+
+def extrair_vagas(texto: str) -> int:
+    m = re.search(r"([\d][.\d]*)\s*vaga", texto, re.IGNORECASE)
+    if m:
+        return int(m.group(1).replace(".", ""))
+    return 0
+
+
+def extrair_data(texto: str):
+    m = re.search(r"(\d{1,2})/(\d{2})/(\d{4})", texto)
+    if m:
+        return f"{m.group(3)}-{m.group(2)}-{m.group(1).zfill(2)}"
+    return None
+
+
+def extrair_salario(texto: str):
+    m = re.search(r"R\$\s*([\d.,]+)", texto)
+    if m:
+        return float(m.group(1).replace(".", "").replace(",", "."))
+    return None
+
+
+def parsear_concursos(soup):
+    concursos = []
+    vistos = set()
+
+    for a in soup.select("a[href*='/noticias/']"):
+        href  = a.get("href", "")
+        title = a.get("title", "")
+        orgao = a.get_text(strip=True)
+
+        # Pula links de seção (sem título ou orgão genérico)
+        if not title or orgao.lower() in ("notícias", "noticias") or len(orgao) < 5:
+            continue
+        if href in vistos:
+            continue
+        vistos.add(href)
+
+        pai = a.find_parent()
+        texto_pai = pai.get_text(" ", strip=True) if pai else ""
+
+        concursos.append({
+            "orgao":             orgao[:150],
+            "titulo":            title[:200],
+            "fonte_url":         href,
+            "estado":            extrair_uf(title),
+            "total_vagas":       extrair_vagas(texto_pai),
+            "data_encerramento": extrair_data(texto_pai),
+            "salario_max":       extrair_salario(texto_pai),
+            "texto_raw":         texto_pai[:200],
+        })
+
+    return concursos
 
 
 def main():
@@ -22,42 +86,19 @@ def main():
     print(f"Status: {r.status_code}")
     soup = BeautifulSoup(r.text, "html.parser")
 
-    # Cada concurso é um <a> que aponta para /noticias/
-    links = soup.select("a[href*='/noticias/']")
-    print(f"\nLinks /noticias/ encontrados na página: {len(links)}")
+    concursos = parsear_concursos(soup)
+    print(f"\nConcursos parseados: {len(concursos)}\n")
 
-    count = 0
-    for a in links[:10]:  # mostra os 10 primeiros
-        orgao = a.get_text(strip=True)
-        href  = a.get("href","")
-        title = a.get("title","")
+    for i, c in enumerate(concursos[:10], 1):
+        print(f"[{i}] {c['orgao'][:55]}")
+        print(f"     UF: {c['estado'] or 'Nacional'}  |  Vagas: {c['total_vagas']}  |  Data: {c['data_encerramento']}  |  Salário: {c['salario_max']}")
+        print(f"     URL: {c['fonte_url']}")
+        print()
 
-        # Pega o container pai para extrair vagas/data
-        pai = a.find_parent()
-        texto_pai = pai.get_text(" ", strip=True) if pai else ""
-
-        # Vagas
-        vagas_m = re.search(r"([\d.,]+)\s*vaga", texto_pai, re.IGNORECASE)
-        vagas   = vagas_m.group(0) if vagas_m else "?"
-
-        # Data (dd/mm/yyyy)
-        data_m = re.search(r"\d{1,2}/\d{2}/\d{4}", texto_pai)
-        data   = data_m.group(0) if data_m else "?"
-
-        # UF (sigla de 2 letras isolada)
-        uf_m = re.search(r"\b([A-Z]{2})\b", texto_pai)
-        uf   = uf_m.group(1) if uf_m else "?"
-
-        print(f"\n[{count+1}] {orgao[:60]}")
-        print(f"     href:  {href}")
-        print(f"     title: {title[:80]}")
-        print(f"     vagas: {vagas}  | data: {data}  | UF: {uf}")
-        print(f"     texto: {texto_pai[:120]}")
-        count += 1
-
-    # Conta total de links únicos de notícia
-    hrefs = set(a.get("href","") for a in links if "/noticias/" in a.get("href",""))
-    print(f"\n\nTotal de links únicos de notícia na página: {len(hrefs)}")
+    com_vagas = sum(1 for c in concursos if c['total_vagas'] > 0)
+    com_data  = sum(1 for c in concursos if c['data_encerramento'])
+    print(f"--- Resumo ---")
+    print(f"Total: {len(concursos)}  |  Com vagas: {com_vagas}  |  Com data: {com_data}")
 
 
 if __name__ == "__main__":

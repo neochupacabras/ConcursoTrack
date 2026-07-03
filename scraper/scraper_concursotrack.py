@@ -1,8 +1,9 @@
 """
-ConcursoTrack — Scraper de Editais (v2)
-========================================
-Raspa concursos das páginas de notícias do PCI Concursos,
-onde os editais abertos são publicados como artigos.
+ConcursoTrack — Scraper de Editais v4
+=======================================
+Raspa a listagem /concursos/ do PCI Concursos diretamente,
+sem precisar entrar em cada artigo individualmente.
+Muito mais rápido: uma única página com todos os concursos abertos.
 
 Dependências:
     pip install httpx beautifulsoup4 supabase python-dotenv
@@ -10,11 +11,9 @@ Dependências:
 
 import os
 import re
-import time
 import hashlib
 import logging
 from datetime import datetime, date
-from dataclasses import dataclass
 from typing import Optional
 
 import httpx
@@ -44,290 +43,158 @@ HEADERS = {
     "Accept-Language": "pt-BR,pt;q=0.9",
 }
 
-DELAY = 1.5
-MAX_PAGINAS = 3  # páginas de notícias a raspar por fonte
+URL_LISTAGEM = "https://www.pciconcursos.com.br/concursos/"
 
-FONTES = [
-    "https://www.pciconcursos.com.br/noticias/nacional/",
-    "https://www.pciconcursos.com.br/noticias/sudeste/",
-    "https://www.pciconcursos.com.br/noticias/sul/",
-    "https://www.pciconcursos.com.br/noticias/nordeste/",
-    "https://www.pciconcursos.com.br/noticias/centrooeste/",
-    "https://www.pciconcursos.com.br/noticias/norte/",
-]
+UFS = {
+    "AC","AL","AM","AP","BA","CE","DF","ES","GO","MA","MG","MS","MT",
+    "PA","PB","PE","PI","PR","RJ","RN","RO","RR","RS","SC","SE","SP","TO",
+}
 
 ESFERA_KEYWORDS = {
     "federal": [
-        "federal", "união", "ministério", "ibge", "inss", "receita federal",
-        "dataprev", "anatel", "banco do brasil", "caixa", "petrobras",
-        "exercito", "marinha", "aeronautica", "ime", "ita",
+        "federal", "ministério", "ibge", "inss", "receita federal", "dataprev",
+        "anatel", "banco do brasil", "caixa econômica", "petrobras", "exercito",
+        "marinha", "aeronautica", "ime ", "ita ", "eear", "denatran", "dnit",
+        "funai", "incra", "iphan", "anvisa", "fiocruz", "loa ", "ancine",
     ],
     "estadual": [
-        "estadual", "governo do estado", "secretaria de estado",
-        "pm -", "pc -", "tce", "mp -", "assembleia legislativa",
-        "pmes", "cbm -",
+        "estadual", "governo do estado", "secretaria de estado", "assembleia",
+        "tribunal de justiça", "ministério público estadual", "defensoria",
+        "pmes", "cbm", "pm -", "pc -", "tce-", "tce ",
     ],
     "municipal": [
-        "prefeitura", "câmara municipal", "municipal", "cm -",
+        "prefeitura", "câmara municipal", "câmara de", "saae", "samae",
+        "autarquia municipal", "guarda municipal",
     ],
 }
 
 AREA_KEYWORDS = {
-    "fiscal_tributaria":  ["fiscal", "tributário", "receita", "fazenda", "auditor", "dataprev"],
-    "seguranca_publica":  [
-        "policial", "delegado", "perito", "agente penitenciário",
-        "guarda municipal", "soldado", "bombeiro", "policia", "pmes", "cbm",
-    ],
-    "saude":              [
-        "médico", "enfermeiro", "farmacêutico", "nutricionista",
-        "psicólogo", "fisioterapeuta", "saúde", "sesau",
-    ],
-    "educacao":           ["professor", "pedagogo", "docente", "educação", "seduc", "magistério"],
-    "administrativa":     ["técnico administrativo", "analista administrativo", "assistente"],
-    "tecnologia":         ["analista de ti", "técnico de ti", "desenvolvedor", "tecnologia da informação"],
-    "engenharia":         ["engenheiro", "arquiteto", "técnico em edificações"],
-    "juridica":           ["advogado", "procurador", "defensor", "promotor", "juiz"],
+    "fiscal_tributaria":  ["fiscal", "tributário", "receita", "fazenda", "auditor", "dataprev", "sefaz"],
+    "seguranca_publica":  ["policial", "delegado", "perito", "agente penitenciário",
+                           "guarda municipal", "soldado", "bombeiro", "pm -", "pmes", "cbm", "eear"],
+    "saude":              ["médico", "enfermeiro", "farmacêutico", "nutricionista",
+                           "psicólogo", "fisioterapeuta", "saúde", "sesau", "sarah"],
+    "educacao":           ["professor", "pedagogo", "docente", "educação", "seduc",
+                           "magistério", "pnd", "prova nacional docente"],
+    "tecnologia":         ["analista de ti", "técnico de ti", "desenvolvedor",
+                           "tecnologia da informação", "dataprev"],
+    "engenharia":         ["engenheiro", "arquiteto", "ime ", "ita "],
+    "juridica":           ["advogado", "procurador", "defensor", "promotor", "juiz", "cartório"],
 }
-
-
-# ---------------------------------------------------------------------------
-# Modelos
-# ---------------------------------------------------------------------------
-
-@dataclass
-class Concurso:
-    titulo:            str
-    orgao:             str
-    esfera:            str
-    estado:            Optional[str]
-    area_conhecimento: str
-    status:            str
-    total_vagas:       int
-    data_encerramento: Optional[date]
-    edital_url:        Optional[str]
-    fonte_url:         str
-
-    @property
-    def slug(self) -> str:
-        base = f"{self.orgao}-{self.titulo}".lower()
-        base = re.sub(r"[^a-z0-9]+", "-", base).strip("-")[:80]
-        sufixo = hashlib.md5(self.fonte_url.encode()).hexdigest()[:6]
-        return f"{base}-{sufixo}"
 
 
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
 
-def extrair_vagas(texto: str) -> int:
-    padrao = re.search(r"([\d][.\d]*[\d]|\d+)\s*vaga", texto, re.IGNORECASE)
-    if padrao:
-        num = padrao.group(1).replace(".", "").replace(",", "")
-        try:
-            return int(num)
-        except ValueError:
-            pass
-    return 0
-
-def extrair_estado(texto: str) -> Optional[str]:
-    match = re.search(r"[-\u2013(]\s*([A-Z]{2})\s*[)\s]", texto)
-    if match:
-        uf = match.group(1)
-        ufs = {
-            "AC","AL","AM","AP","BA","CE","DF","ES","GO","MA","MG","MS",
-            "MT","PA","PB","PE","PI","PR","RJ","RN","RO","RR","RS","SC",
-            "SE","SP","TO",
-        }
-        if uf in ufs:
-            return uf
-    estados = {
-        "acre": "AC", "alagoas": "AL", "amapá": "AP", "amazonas": "AM",
-        "bahia": "BA", "ceará": "CE", "distrito federal": "DF",
-        "espírito santo": "ES", "goiás": "GO", "maranhão": "MA",
-        "mato grosso do sul": "MS", "mato grosso": "MT", "minas gerais": "MG",
-        "pará": "PA", "paraíba": "PB", "paraná": "PR", "pernambuco": "PE",
-        "piauí": "PI", "rio de janeiro": "RJ", "rio grande do norte": "RN",
-        "rio grande do sul": "RS", "rondônia": "RO", "roraima": "RR",
-        "santa catarina": "SC", "são paulo": "SP", "sergipe": "SE",
-        "tocantins": "TO",
-    }
-    txt = texto.lower()
-    for nome, uf in estados.items():
-        if nome in txt:
+def extrair_uf(title: str) -> Optional[str]:
+    """Extrai UF do atributo title. Ex: 'IBGE - BR: ...' → None, 'PM - SP: ...' → 'SP'"""
+    m = re.search(r"-\s*([A-Z]{2})\s*[:–\-]", title)
+    if m:
+        uf = m.group(1)
+        if uf in UFS:
             return uf
     return None
 
-def detectar_esfera(titulo: str) -> str:
-    txt = titulo.lower()
+
+def extrair_vagas(texto: str) -> int:
+    m = re.search(r"([\d][.\d]*)\s*vaga", texto, re.IGNORECASE)
+    if m:
+        try:
+            return int(m.group(1).replace(".", ""))
+        except ValueError:
+            pass
+    # "Cadastro Reserva" → 0 vagas
+    return 0
+
+
+def extrair_data(texto: str) -> Optional[date]:
+    # Procura padrão dd/mm/yyyy
+    matches = re.findall(r"(\d{1,2})/(\d{2})/(\d{4})", texto)
+    datas = []
+    for d, m, a in matches:
+        try:
+            datas.append(date(int(a), int(m), int(d)))
+        except ValueError:
+            pass
+    if not datas:
+        return None
+    # Se houver duas datas (período de inscrição), pega a maior (encerramento)
+    return max(datas)
+
+
+def detectar_esfera(orgao: str, titulo: str) -> str:
+    txt = (orgao + " " + titulo).lower()
     for esfera, palavras in ESFERA_KEYWORDS.items():
         if any(p in txt for p in palavras):
             return esfera
-    if "prefeitura" in txt:
-        return "municipal"
     return "nao_identificada"
 
-def detectar_area(titulo: str) -> str:
-    txt = titulo.lower()
+
+def detectar_area(orgao: str, titulo: str) -> str:
+    txt = (orgao + " " + titulo).lower()
     for area, palavras in AREA_KEYWORDS.items():
         if any(p in txt for p in palavras):
             return area
     return "administrativa"
 
-def extrair_data(texto: str) -> Optional[date]:
-    meses = {
-        "janeiro": 1, "fevereiro": 2, "março": 3, "abril": 4,
-        "maio": 5, "junho": 6, "julho": 7, "agosto": 8,
-        "setembro": 9, "outubro": 10, "novembro": 11, "dezembro": 12,
-    }
-    m = re.search(r"(\d{1,2})/(\d{1,2})/(\d{4})", texto)
-    if m:
-        try:
-            return date(int(m.group(3)), int(m.group(2)), int(m.group(1)))
-        except ValueError:
-            pass
-    m = re.search(r"(\d{1,2})\s+de\s+(\w+)\s+de\s+(\d{4})", texto, re.IGNORECASE)
-    if m:
-        mes_num = meses.get(m.group(2).lower())
-        if mes_num:
-            try:
-                return date(int(m.group(3)), mes_num, int(m.group(1)))
-            except ValueError:
-                pass
-    return None
+
+def fazer_slug(orgao: str, fonte_url: str) -> str:
+    base = orgao.lower()
+    base = re.sub(r"[^a-z0-9]+", "-", base).strip("-")[:60]
+    sufixo = hashlib.md5(fonte_url.encode()).hexdigest()[:6]
+    return f"{base}-{sufixo}"
 
 
 # ---------------------------------------------------------------------------
 # Scraper
 # ---------------------------------------------------------------------------
 
-class PCIScraper:
-    BASE = "https://www.pciconcursos.com.br"
+def raspar_listagem(http: httpx.Client) -> list[dict]:
+    log.info(f"Buscando listagem: {URL_LISTAGEM}")
+    try:
+        r = http.get(URL_LISTAGEM, timeout=20)
+        r.raise_for_status()
+    except httpx.HTTPError as e:
+        log.error(f"Erro HTTP: {e}")
+        return []
 
-    def __init__(self, client: httpx.Client):
-        self.http = client
+    soup = BeautifulSoup(r.text, "html.parser")
+    concursos = []
+    vistos: set[str] = set()
 
-    def _get(self, url: str) -> Optional[BeautifulSoup]:
-        try:
-            r = self.http.get(url, timeout=15)
-            r.raise_for_status()
-            return BeautifulSoup(r.text, "html.parser")
-        except httpx.HTTPError as e:
-            log.warning(f"HTTP error {url}: {e}")
-            return None
+    for a in soup.select("a[href*='/noticias/']"):
+        href  = a.get("href", "")
+        title = a.get("title", "")
+        orgao = a.get_text(strip=True)
 
-    def _links_da_listagem(self, url: str) -> list:
-        soup = self._get(url)
-        if not soup:
-            return []
-        links = []
-        for a in soup.select("a[href]"):
-            href = a.get("href", "")
-            if "/noticias/" in href and href.count("/") >= 4:
-                full = href if href.startswith("http") else self.BASE + href
-                if full not in links:
-                    links.append(full)
-        return links
+        # Pula links de seção/menu
+        if not title or len(orgao) < 5:
+            continue
+        if orgao.lower() in ("notícias", "noticias", "nacional", "sudeste",
+                             "sul", "norte", "nordeste", "centro-oeste"):
+            continue
+        if href in vistos:
+            continue
+        vistos.add(href)
 
-    def _parsear_noticia(self, url: str) -> Optional[Concurso]:
-        soup = self._get(url)
-        if not soup:
-            return None
+        pai = a.find_parent()
+        texto_pai = pai.get_text(" ", strip=True) if pai else ""
 
-        # Título: og:title é mais confiável que h1 (o primeiro h1 é o logo do site)
-        meta_og = soup.find("meta", property="og:title")
-        if meta_og and meta_og.get("content"):
-            titulo = meta_og["content"].strip()
-        else:
-            # Fallback: pega h1 que NÃO seja o logo do PCI
-            for h1 in soup.select("h1"):
-                t = h1.get_text(strip=True)
-                if t and "pci concursos" not in t.lower() and len(t) > 10:
-                    titulo = t
-                    break
-            else:
-                titulo = ""
+        concursos.append({
+            "orgao":             orgao[:150],
+            "titulo":            title[:200],
+            "fonte_url":         href,
+            "estado":            extrair_uf(title),
+            "total_vagas":       extrair_vagas(texto_pai),
+            "data_encerramento": extrair_data(texto_pai),
+            "esfera":            detectar_esfera(orgao, title),
+            "area_conhecimento": detectar_area(orgao, title),
+            "status":            "aberto",
+        })
 
-        if not titulo:
-            return None
-
-        palavras_edital = ["concurso", "seleção", "edital", "processo seletivo", "vagas", "inscrições"]
-        if not any(p in titulo.lower() for p in palavras_edital):
-            return None
-
-        texto_completo = soup.get_text(" ")
-        vagas = extrair_vagas(titulo + " " + texto_completo[:1000])
-
-        # Extrai órgão
-        orgao = titulo
-        m = re.match(
-            r"^(.+?)\s+(?:abre|publica|divulga|lança|retifica|prorroga)",
-            titulo, re.IGNORECASE
-        )
-        if m:
-            orgao = m.group(1).strip()
-        orgao = re.sub(r"\s*[-\u2013]\s*[A-Z]{2}\s*$", "", orgao).strip()[:150]
-
-        # Data de encerramento
-        data_enc = None
-        for pad in [
-            r"inscri[çc][õo]es?\s+at[eé]\s+(\d{1,2}/\d{1,2}/\d{4})",
-            r"prazo.*?(\d{1,2}/\d{1,2}/\d{4})",
-            r"at[eé]\s+o\s+dia\s+(\d{1,2}/\d{1,2}/\d{4})",
-        ]:
-            m2 = re.search(pad, texto_completo, re.IGNORECASE)
-            if m2:
-                data_enc = extrair_data(m2.group(1))
-                if data_enc:
-                    break
-
-        # Link do edital
-        edital_url = None
-        for a in soup.select("a[href]"):
-            texto_link = a.get_text(strip=True).lower()
-            if any(p in texto_link for p in ["edital", "acesse o edital", "clique aqui"]):
-                href = a.get("href", "")
-                edital_url = href if href.startswith("http") else self.BASE + href
-                break
-
-        return Concurso(
-            titulo=titulo[:200],
-            orgao=orgao,
-            esfera=detectar_esfera(titulo),
-            estado=extrair_estado(titulo),
-            area_conhecimento=detectar_area(titulo),
-            status="aberto",
-            total_vagas=vagas,
-            data_encerramento=data_enc,
-            edital_url=edital_url,
-            fonte_url=url,
-        )
-
-    def scrape(self, max_paginas: int = MAX_PAGINAS) -> list:
-        todos_links = []
-        for fonte in FONTES:
-            for pagina in range(1, max_paginas + 1):
-                url = fonte if pagina == 1 else f"{fonte}?pagina={pagina}"
-                log.info(f"Listagem: {url}")
-                links = self._links_da_listagem(url)
-                if not links:
-                    break
-                todos_links.extend(links)
-                time.sleep(DELAY)
-
-        vistos = set()
-        links_unicos = [l for l in todos_links if not (l in vistos or vistos.add(l))]
-        log.info(f"Links únicos: {len(links_unicos)}")
-
-        concursos = []
-        for url in links_unicos:
-            c = self._parsear_noticia(url)
-            if c:
-                concursos.append(c)
-                log.info(f"  + {c.orgao} | {c.total_vagas}v | {c.estado or 'BR'}")
-            time.sleep(DELAY)
-
-        log.info(f"Total: {len(concursos)} concursos")
-        return concursos
+    log.info(f"Concursos encontrados na listagem: {len(concursos)}")
+    return concursos
 
 
 # ---------------------------------------------------------------------------
@@ -338,26 +205,27 @@ class SupabaseWriter:
     def __init__(self, db: Client):
         self.db = db
 
-    def salvar(self, c: Concurso) -> Optional[str]:
+    def salvar(self, c: dict) -> Optional[str]:
+        slug = fazer_slug(c["orgao"], c["fonte_url"])
         try:
             payload = {
-                "slug":               c.slug,
-                "titulo":             c.titulo,
-                "orgao":              c.orgao,
-                "esfera":             c.esfera,
-                "estado":             c.estado,
-                "area_conhecimento":  c.area_conhecimento,
-                "status":             c.status,
-                "total_vagas":        c.total_vagas,
-                "data_encerramento":  c.data_encerramento.isoformat() if c.data_encerramento else None,
-                "edital_url":         c.edital_url,
-                "fonte_url":          c.fonte_url,
+                "slug":               slug,
+                "titulo":             c["titulo"],
+                "orgao":              c["orgao"],
+                "esfera":             c["esfera"],
+                "estado":             c["estado"],
+                "area_conhecimento":  c["area_conhecimento"],
+                "status":             c["status"],
+                "total_vagas":        c["total_vagas"],
+                "data_encerramento":  c["data_encerramento"].isoformat() if c["data_encerramento"] else None,
+                "edital_url":         c["fonte_url"],
+                "fonte_url":          c["fonte_url"],
                 "scraped_em":         datetime.utcnow().isoformat(),
             }
             res = self.db.table("concursos").upsert(payload, on_conflict="slug").execute()
             return res.data[0]["id"] if res.data else None
         except Exception as e:
-            log.error(f"Erro ao salvar '{c.orgao}': {e}")
+            log.error(f"Erro ao salvar '{c['orgao']}': {e}")
             return None
 
 
@@ -365,7 +233,7 @@ class SupabaseWriter:
 # Alertas
 # ---------------------------------------------------------------------------
 
-def disparar_alertas(db: Client, novos_ids: list) -> int:
+def disparar_alertas(db: Client, novos_ids: list[str]) -> int:
     if not novos_ids:
         return 0
     enviados = 0
@@ -401,22 +269,22 @@ def disparar_alertas(db: Client, novos_ids: list) -> int:
 # ---------------------------------------------------------------------------
 
 def main():
-    log.info("=== ConcursoTrack Scraper v2 iniciado ===")
+    log.info("=== ConcursoTrack Scraper v4 iniciado ===")
 
     supabase = create_client(SUPABASE_URL, SUPABASE_KEY)
     writer   = SupabaseWriter(supabase)
 
     with httpx.Client(headers=HEADERS, follow_redirects=True) as http:
-        scraper  = PCIScraper(http)
-        concursos = scraper.scrape()
+        concursos = raspar_listagem(http)
 
     salvos    = 0
-    novos_ids = []
+    novos_ids: list[str] = []
 
     for c in concursos:
+        slug = fazer_slug(c["orgao"], c["fonte_url"])
         existia = (
             supabase.table("concursos").select("id")
-            .eq("slug", c.slug).maybe_single().execute().data
+            .eq("slug", slug).maybe_single().execute().data
         )
         cid = writer.salvar(c)
         if cid:
@@ -427,7 +295,7 @@ def main():
     log.info(f"Salvos/atualizados: {salvos}/{len(concursos)}")
     log.info(f"Novos (para alertas): {len(novos_ids)}")
     disparar_alertas(supabase, novos_ids)
-    log.info("=== Scraper finalizado ===")
+    log.info("=== Scraper v4 finalizado ===")
 
 
 if __name__ == "__main__":
