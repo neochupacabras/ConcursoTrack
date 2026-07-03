@@ -282,10 +282,11 @@ def main():
 
     for c in concursos:
         slug = fazer_slug(c["orgao"], c["fonte_url"])
-        existia = (
-            supabase.table("concursos").select("id")
-            .eq("slug", slug).maybe_single().execute().data
-        )
+        try:
+            res_existia = supabase.table("concursos").select("id").eq("slug", slug).limit(1).execute()
+            existia = bool(res_existia.data)
+        except Exception:
+            existia = False
         cid = writer.salvar(c)
         if cid:
             salvos += 1
