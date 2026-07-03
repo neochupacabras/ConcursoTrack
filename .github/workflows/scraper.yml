@@ -4,6 +4,15 @@ on:
   schedule:
     - cron: "0 11,21 * * *"
   workflow_dispatch:
+    inputs:
+      modo:
+        description: 'teste = 5 links sem banco | completo = producao'
+        required: true
+        default: 'teste'
+        type: choice
+        options:
+          - teste
+          - completo
 
 jobs:
   scraper:
@@ -22,18 +31,24 @@ jobs:
         with:
           python-version: "3.12"
 
-      - name: Instalar dependências
+      - name: Instalar dependencias
         run: pip install httpx beautifulsoup4 supabase python-dotenv
 
-      - name: Executar scraper
+      - name: Modo TESTE (5 links, sem banco)
+        if: github.event.inputs.modo == 'teste'
+        run: python scraper/scraper_test.py
+
+      - name: Modo COMPLETO (producao com banco)
+        if: github.event.inputs.modo == 'completo' || github.event_name == 'schedule'
         env:
-          SUPABASE_URL:         ${{ secrets.SUPABASE_URL }}
+          SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
           SUPABASE_SERVICE_KEY: ${{ secrets.SUPABASE_SERVICE_KEY }}
         run: python scraper/scraper_concursotrack.py
 
-      - name: Disparar envio de notificações
+      - name: Disparar notificacoes
+        if: github.event.inputs.modo == 'completo' || github.event_name == 'schedule'
         env:
-          APP_URL:     ${{ secrets.NEXT_PUBLIC_APP_URL }}
+          APP_URL: ${{ secrets.NEXT_PUBLIC_APP_URL }}
           CRON_SECRET: ${{ secrets.CRON_SECRET }}
         run: |
           curl -s -X POST "$APP_URL/api/notif/send" \
@@ -41,7 +56,7 @@ jobs:
             -H "Content-Type: application/json" \
             --fail-with-body
 
-      - name: Notificar em caso de falha
+      - name: Notificar falha
         if: failure()
         uses: actions/github-script@v7
         with:
@@ -49,8 +64,8 @@ jobs:
           script: |
             github.rest.issues.create({
               owner: context.repo.owner,
-              repo:  context.repo.repo,
+              repo: context.repo.repo,
               title: `Scraper falhou em ${new Date().toISOString()}`,
-              body:  `Workflow: ${context.workflow}\nRun: https://github.com/${context.repo.owner}/${context.repo.repo}/actions/runs/${context.runId}`,
+              body: `Run: https://github.com/${context.repo.owner}/${context.repo.repo}/actions/runs/${context.runId}`,
               labels: ['bug']
             })
