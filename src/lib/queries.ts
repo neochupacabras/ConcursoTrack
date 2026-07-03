@@ -66,7 +66,7 @@ export async function getConcursosUrgentes(dias = 7) {
 
   const { data } = await supabase
     .from('concursos')
-    .select('id, slug, titulo, orgao, data_encerramento, total_vagas, area_conhecimento')
+    .select('id, slug, titulo, orgao, data_encerramento, total_vagas, area_conhecimento, esfera, estado, status')
     .eq('status', 'aberto')
     .gte('data_encerramento', hoje)
     .lte('data_encerramento', limite)
