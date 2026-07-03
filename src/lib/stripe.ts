@@ -2,8 +2,7 @@ import Stripe from 'stripe'
 
 // Instância singleton do Stripe — reutilizada em todas as API routes
 export const stripe = new Stripe(process.env.STRIPE_SECRET_KEY!, {
-  apiVersion: '2024-11-20.acacia',
-  typescript: true,
+  apiVersion: '2025-02-24.acacia',
 })
 
 // IDs dos preços — lidos das env vars em runtime
