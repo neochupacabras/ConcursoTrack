@@ -1,7 +1,7 @@
 """
-ConcursoTrack — Scraper de TESTE
-Processa apenas 5 links e imprime diagnóstico completo.
-Rode com: python scraper/scraper_test.py
+ConcursoTrack — Scraper de TESTE v3
+Raspa a listagem /concursos/ do PCI diretamente.
+Roda em ~5 segundos. Sem banco de dados.
 """
 
 import re
@@ -13,70 +13,51 @@ HEADERS = {
     "Accept-Language": "pt-BR,pt;q=0.9",
 }
 
-FONTE = "https://www.pciconcursos.com.br/noticias/nacional/"
-MAX_LINKS = 5
-
-
-def get(url: str) -> BeautifulSoup:
-    r = httpx.get(url, headers=HEADERS, follow_redirects=True, timeout=15)
-    print(f"  [{r.status_code}] {url}")
-    return BeautifulSoup(r.text, "html.parser")
-
-
-def inspecionar(url: str):
-    print(f"\n{'='*60}")
-    print(f"URL: {url}")
-    soup = get(url)
-
-    # Todos os h1
-    h1s = soup.select("h1")
-    print(f"\n--- H1s encontrados ({len(h1s)}) ---")
-    for i, h in enumerate(h1s):
-        print(f"  [{i}] '{h.get_text(strip=True)[:100]}'")
-
-    # og:title
-    og = soup.find("meta", property="og:title")
-    print(f"\n--- og:title ---")
-    print(f"  '{og['content'] if og else 'NÃO ENCONTRADO'}'")
-
-    # og:description
-    og_desc = soup.find("meta", property="og:description")
-    print(f"\n--- og:description ---")
-    print(f"  '{og_desc['content'][:150] if og_desc else 'NÃO ENCONTRADO'}'")
-
-    # title da página
-    title_el = soup.select_one("title")
-    print(f"\n--- <title> ---")
-    print(f"  '{title_el.get_text(strip=True) if title_el else 'NÃO ENCONTRADO'}'")
-
-    # Primeiros 500 chars do texto visível
-    texto = soup.get_text(" ", strip=True)[:500]
-    print(f"\n--- Texto inicial ---")
-    print(f"  {texto}")
-
-    # Busca por "vaga" no texto
-    vagas_match = re.search(r"([\d][.\d]*[\d]|\d+)\s*vaga", texto, re.IGNORECASE)
-    print(f"\n--- Vagas encontradas ---")
-    print(f"  {vagas_match.group(0) if vagas_match else 'nenhuma'}")
+URL = "https://www.pciconcursos.com.br/concursos/"
 
 
 def main():
-    print(f"Buscando links em: {FONTE}")
-    soup = get(FONTE)
+    print(f"Buscando: {URL}")
+    r = httpx.get(URL, headers=HEADERS, follow_redirects=True, timeout=15)
+    print(f"Status: {r.status_code}")
+    soup = BeautifulSoup(r.text, "html.parser")
 
-    links = []
-    for a in soup.select("a[href]"):
-        href = a.get("href", "")
-        if "/noticias/" in href and href.count("/") >= 4:
-            full = href if href.startswith("http") else "https://www.pciconcursos.com.br" + href
-            if full not in links:
-                links.append(full)
+    # Cada concurso é um <a> que aponta para /noticias/
+    links = soup.select("a[href*='/noticias/']")
+    print(f"\nLinks /noticias/ encontrados na página: {len(links)}")
 
-    print(f"\nLinks encontrados: {len(links)}")
-    print(f"Inspecionando os primeiros {MAX_LINKS}:\n")
+    count = 0
+    for a in links[:10]:  # mostra os 10 primeiros
+        orgao = a.get_text(strip=True)
+        href  = a.get("href","")
+        title = a.get("title","")
 
-    for url in links[:MAX_LINKS]:
-        inspecionar(url)
+        # Pega o container pai para extrair vagas/data
+        pai = a.find_parent()
+        texto_pai = pai.get_text(" ", strip=True) if pai else ""
+
+        # Vagas
+        vagas_m = re.search(r"([\d.,]+)\s*vaga", texto_pai, re.IGNORECASE)
+        vagas   = vagas_m.group(0) if vagas_m else "?"
+
+        # Data (dd/mm/yyyy)
+        data_m = re.search(r"\d{1,2}/\d{2}/\d{4}", texto_pai)
+        data   = data_m.group(0) if data_m else "?"
+
+        # UF (sigla de 2 letras isolada)
+        uf_m = re.search(r"\b([A-Z]{2})\b", texto_pai)
+        uf   = uf_m.group(1) if uf_m else "?"
+
+        print(f"\n[{count+1}] {orgao[:60]}")
+        print(f"     href:  {href}")
+        print(f"     title: {title[:80]}")
+        print(f"     vagas: {vagas}  | data: {data}  | UF: {uf}")
+        print(f"     texto: {texto_pai[:120]}")
+        count += 1
+
+    # Conta total de links únicos de notícia
+    hrefs = set(a.get("href","") for a in links if "/noticias/" in a.get("href",""))
+    print(f"\n\nTotal de links únicos de notícia na página: {len(hrefs)}")
 
 
 if __name__ == "__main__":
