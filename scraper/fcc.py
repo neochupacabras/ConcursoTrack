@@ -213,13 +213,18 @@ def _raspar_detalhe(http: httpx.Client, url: str) -> dict:
         d = _parse_data(m.group(1))
         if d:
             datas.append(d)
-    if len(datas) >= 2:
-        # Ordena — abertura é a menor, encerramento a maior
-        datas_ordenadas = sorted(set(datas))
-        resultado["data_abertura"]     = datas_ordenadas[0]
-        resultado["data_encerramento"] = datas_ordenadas[-1]
-    elif len(datas) == 1:
-        resultado["data_encerramento"] = datas[0]
+    if datas:
+        hoje = date.today()
+        # Filtra datas razoáveis (entre 5 anos atrás e 3 anos à frente)
+        from datetime import timedelta
+        datas_validas = [d for d in set(datas)
+                         if (hoje - timedelta(days=365*5)) <= d <= (hoje + timedelta(days=365*3))]
+        if len(datas_validas) >= 2:
+            datas_ordenadas = sorted(datas_validas)
+            resultado["data_abertura"]     = datas_ordenadas[0]
+            resultado["data_encerramento"] = datas_ordenadas[-1]
+        elif len(datas_validas) == 1:
+            resultado["data_encerramento"] = datas_validas[0]
 
     # Vagas
     m_vagas = re.search(r"([\d.,]+)\s*(?:vagas?|cargos?)", texto_pagina, re.IGNORECASE)
@@ -230,11 +235,22 @@ def _raspar_detalhe(http: httpx.Client, url: str) -> dict:
             pass
 
     # PDFs — div.campoLinkArquivo a
+    # Ignora links de inscrição e portal do candidato
+    IGNORAR_HREFS = ["portal_candidato", "portal-candidato", "inscricao", "inscrição"]
+    IGNORAR_TEXTOS = ["inscrição via internet", "inscrição online", "portal do candidato",
+                      "geração de boleto", "clique aqui para se inscrever"]
     for div in soup.select("div.campoLinkArquivo"):
         for a in div.find_all("a", href=True):
             href  = a.get("href", "")
             texto = a.get_text(strip=True)
             if not texto or len(texto) < 3:
+                continue
+            # Ignora links de inscrição
+            href_lower  = href.lower()
+            texto_lower = texto.lower()
+            if any(ig in href_lower for ig in IGNORAR_HREFS):
+                continue
+            if any(ig in texto_lower for ig in IGNORAR_TEXTOS):
                 continue
             url_pdf = _extrair_url_real_pdf(href)
             if not any(l["url"] == url_pdf for l in resultado["links_pdf"]):
