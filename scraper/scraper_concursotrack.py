@@ -13,7 +13,7 @@ import os
 import re
 import hashlib
 import logging
-from datetime import datetime, date
+from datetime import datetime, date, timezone
 from typing import Optional
 
 import httpx
@@ -220,7 +220,7 @@ class SupabaseWriter:
                 "data_encerramento":  c["data_encerramento"].isoformat() if c["data_encerramento"] else None,
                 "edital_url":         c["fonte_url"],
                 "fonte_url":          c["fonte_url"],
-                "scraped_em":         datetime.utcnow().isoformat(),
+                "scraped_em":         datetime.now(timezone.utc).isoformat(),
             }
             res = self.db.table("concursos").upsert(payload, on_conflict="slug").execute()
             return res.data[0]["id"] if res.data else None
@@ -236,12 +236,21 @@ class SupabaseWriter:
 def disparar_alertas(db: Client, novos_ids: list[str]) -> int:
     if not novos_ids:
         return 0
+
+    # Busca todos os alertas ativos de uma vez (1 query)
+    alertas = db.table("alertas").select("*").eq("ativo", True).execute().data or []
+    if not alertas:
+        log.info("Nenhum alerta ativo cadastrado.")
+        return 0
+
+    # Busca todos os novos concursos de uma vez (1 query)
+    concursos = db.table("concursos").select("*").in_("id", novos_ids).execute().data or []
+
     enviados = 0
-    for cid in novos_ids:
-        concurso = db.table("concursos").select("*").eq("id", cid).single().execute().data
-        if not concurso:
-            continue
-        alertas = db.table("alertas").select("*").eq("ativo", True).execute().data or []
+    fila = []
+    agora = datetime.now(timezone.utc).isoformat()
+
+    for concurso in concursos:
         for alerta in alertas:
             if alerta.get("area_conhecimento") and alerta["area_conhecimento"] != concurso.get("area_conhecimento"):
                 continue
@@ -249,17 +258,22 @@ def disparar_alertas(db: Client, novos_ids: list[str]) -> int:
                 continue
             if alerta.get("esfera") and alerta["esfera"] != concurso.get("esfera"):
                 continue
-            try:
-                db.table("notificacoes_fila").insert({
-                    "user_id":     alerta["user_id"],
-                    "concurso_id": cid,
-                    "canal":       alerta.get("canal", "email"),
-                    "enviado":     False,
-                    "criado_em":   datetime.utcnow().isoformat(),
-                }).execute()
-                enviados += 1
-            except Exception as e:
-                log.warning(f"Erro ao enfileirar alerta: {e}")
+            fila.append({
+                "user_id":     alerta["user_id"],
+                "concurso_id": concurso["id"],
+                "canal":       alerta.get("canal", "email"),
+                "enviado":     False,
+                "criado_em":   agora,
+            })
+
+    # Insere toda a fila em batch (1 query)
+    if fila:
+        try:
+            db.table("notificacoes_fila").insert(fila).execute()
+            enviados = len(fila)
+        except Exception as e:
+            log.error(f"Erro ao inserir fila de alertas: {e}")
+
     log.info(f"Alertas enfileirados: {enviados}")
     return enviados
 
