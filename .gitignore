@@ -43,3 +43,5 @@ __pycache__/
 *.pyo
 .venv/
 venv/
+"scraper/diagnostico_*.py" 
+"scraper/inspecionar_*.py" 
