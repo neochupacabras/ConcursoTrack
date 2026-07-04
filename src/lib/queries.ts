@@ -50,6 +50,7 @@ export async function getConcursoBySlug(slug: string) {
     `)
     .eq('slug', slug)
     .single()
+  // descricao e links_pdf já vêm no * acima
 
   if (error) return null
   return data as Concurso

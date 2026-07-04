@@ -47,6 +47,9 @@ export interface Concurso {
   fonte_url:   string
   scraped_em:  string | null
   criado_em:   string
+  // campos de enriquecimento
+  descricao?:   string | null
+  links_pdf?:   string | null   // JSON string de [{titulo, url}]
   // relações opcionais (join)
   bancas?:            Banca
   cargos?:            Cargo[]
