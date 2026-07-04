@@ -4,7 +4,7 @@ Fase 1: listagem rapida em /concursos/
 Fase 2: enriquece artigos com seletores certeiros baseados em diagnostico HTML
 """
 
-import os, re, time, json, hashlib, logging
+import os, re, time, json, json, hashlib, logging
 from datetime import datetime, date, timezone
 from typing import Optional
 
@@ -12,6 +12,25 @@ import httpx
 from bs4 import BeautifulSoup
 from dotenv import load_dotenv
 from supabase import create_client, Client
+
+# Scrapers de bancas
+try:
+    from cebraspe import CebraspeScraper
+    CEBRASPE_DISPONIVEL = True
+except ImportError:
+    CEBRASPE_DISPONIVEL = False
+
+try:
+    from fgv import FGVScraper
+    FGV_DISPONIVEL = True
+except ImportError:
+    FGV_DISPONIVEL = False
+
+try:
+    from ibfc import IBFCScraper
+    IBFC_DISPONIVEL = True
+except ImportError:
+    IBFC_DISPONIVEL = False
 
 load_dotenv()
 logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(message)s")
@@ -285,6 +304,35 @@ class SupabaseWriter:
             return not res.data[0].get("descricao")
         except: return False
 
+    def salvar_banca(self, c):
+        """Salva concurso vindo de uma banca externa (com PDFs e datas ja prontos)."""
+        slug = fazer_slug(c["orgao"], c["fonte_url"])
+        try:
+            payload = {
+                "slug":              slug,
+                "titulo":            c.get("titulo") or c["orgao"],
+                "orgao":             c["orgao"],
+                "esfera":            c.get("esfera", "nao_identificada"),
+                "estado":            c.get("estado"),
+                "area_conhecimento": c.get("area_conhecimento", "administrativa"),
+                "status":            c.get("status", "aberto"),
+                "total_vagas":       c.get("total_vagas", 0),
+                "data_abertura":     c["data_abertura"].isoformat() if c.get("data_abertura") else None,
+                "data_encerramento": c["data_encerramento"].isoformat() if c.get("data_encerramento") else None,
+                "edital_url":        c["fonte_url"],
+                "fonte_url":         c["fonte_url"],
+                "scraped_em":        datetime.now(timezone.utc).isoformat(),
+            }
+            if c.get("links_pdf"):
+                payload["links_pdf"] = json.dumps(c["links_pdf"], ensure_ascii=False)
+            if c.get("descricao"):
+                payload["descricao"] = c["descricao"]
+
+            res = self.db.table("concursos").upsert(payload, on_conflict="slug").execute()
+            return res.data[0]["id"] if res.data else None
+        except Exception as e:
+            log.error(f"Erro salvar_banca '{c['orgao']}': {e}"); return None
+
     def atualizar_enriquecimento(self, slug, dados):
         try:
             payload = {}
@@ -359,6 +407,61 @@ def main():
             time.sleep(DELAY_ARTIGO)
 
         log.info(f"[Fase 2] Enriquecidos: {enriquecidos}/{total}")
+
+        # ── Fase 3: bancas externas ──────────────────────────────────────
+        if CEBRASPE_DISPONIVEL:
+            log.info("[Fase 3] Cebraspe...")
+            try:
+                cebraspe_scraper = CebraspeScraper(http)
+                concursos_cebraspe = cebraspe_scraper.scrape()
+                for c in concursos_cebraspe:
+                    slug   = fazer_slug(c["orgao"], c["fonte_url"])
+                    res_ex = supabase.table("concursos").select("id").eq("slug", slug).limit(1).execute()
+                    eh_novo = not bool(res_ex.data)
+                    cid = writer.salvar_banca(c)
+                    if cid and eh_novo:
+                        novos_ids.append(cid)
+                log.info(f"[Fase 3] Cebraspe: {len(concursos_cebraspe)} concursos processados")
+            except Exception as e:
+                log.error(f"[Fase 3] Erro Cebraspe: {e}")
+        else:
+            log.info("[Fase 3] Cebraspe não disponível (cebraspe.py ausente)")
+
+        if FGV_DISPONIVEL:
+            log.info("[Fase 3] FGV...")
+            try:
+                fgv_scraper = FGVScraper(http)
+                concursos_fgv = fgv_scraper.scrape()
+                for c in concursos_fgv:
+                    slug   = fazer_slug(c["orgao"], c["fonte_url"])
+                    res_ex = supabase.table("concursos").select("id").eq("slug", slug).limit(1).execute()
+                    eh_novo = not bool(res_ex.data)
+                    cid = writer.salvar_banca(c)
+                    if cid and eh_novo:
+                        novos_ids.append(cid)
+                log.info(f"[Fase 3] FGV: {len(concursos_fgv)} concursos processados")
+            except Exception as e:
+                log.error(f"[Fase 3] Erro FGV: {e}")
+        else:
+            log.info("[Fase 3] FGV não disponível (fgv.py ausente)")
+
+        if IBFC_DISPONIVEL:
+            log.info("[Fase 3] IBFC...")
+            try:
+                ibfc_scraper = IBFCScraper(http)
+                concursos_ibfc = ibfc_scraper.scrape()
+                for c in concursos_ibfc:
+                    slug   = fazer_slug(c["orgao"], c["fonte_url"])
+                    res_ex = supabase.table("concursos").select("id").eq("slug", slug).limit(1).execute()
+                    eh_novo = not bool(res_ex.data)
+                    cid = writer.salvar_banca(c)
+                    if cid and eh_novo:
+                        novos_ids.append(cid)
+                log.info(f"[Fase 3] IBFC: {len(concursos_ibfc)} concursos processados")
+            except Exception as e:
+                log.error(f"[Fase 3] Erro IBFC: {e}")
+        else:
+            log.info("[Fase 3] IBFC não disponível (ibfc.py ausente)")
 
     disparar_alertas(supabase, novos_ids)
     log.info("=== Scraper v5 finalizado ===")
