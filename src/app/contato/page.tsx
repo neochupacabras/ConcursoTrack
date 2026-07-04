@@ -14,14 +14,18 @@ export default function ContatoPage() {
     e.preventDefault()
     setLoading(true)
 
-    // Envia para Formspree ou endpoint próprio
-    // Por ora, abre o cliente de e-mail como fallback
-    const subject = encodeURIComponent(`[ConcursoTrack] ${assunto}`)
-    const body    = encodeURIComponent(`Nome: ${nome}\nE-mail: ${email}\n\n${mensagem}`)
-    window.location.href = `mailto:contato@concursotrack.com.br?subject=${subject}&body=${body}`
+    const res = await fetch(process.env.NEXT_PUBLIC_FORMSPREE_URL!, {
+      method:  'POST',
+      headers: { 'Content-Type': 'application/json', 'Accept': 'application/json' },
+      body:    JSON.stringify({ nome, email, assunto, mensagem }),
+    })
 
     setLoading(false)
-    setEnviado(true)
+    if (res.ok) {
+      setEnviado(true)
+    } else {
+      alert('Não foi possível enviar. Tente novamente ou escreva para contato@concursotrack.com.br')
+    }
   }
 
   return (
@@ -58,8 +62,8 @@ export default function ContatoPage() {
               <path d="M9 12.75L11.25 15 15 9.75M21 12a9 9 0 11-18 0 9 9 0 0118 0z" strokeLinecap="round" strokeLinejoin="round"/>
             </svg>
           </div>
-          <p className="font-semibold text-slate-900 mb-1">Mensagem preparada!</p>
-          <p className="text-slate-500 text-sm">Seu cliente de e-mail foi aberto. Envie a mensagem para finalizarmos o contato.</p>
+          <p className="font-semibold text-slate-900 mb-1">Mensagem enviada!</p>
+          <p className="text-slate-500 text-sm">Recebemos sua mensagem e responderemos em até 2 dias úteis no e-mail informado.</p>
           <button
             onClick={() => { setEnviado(false); setNome(''); setEmail(''); setAssunto(''); setMensagem('') }}
             className="mt-4 text-xs text-blue-600 hover:underline"
