@@ -32,6 +32,12 @@ try:
 except ImportError:
     IBFC_DISPONIVEL = False
 
+try:
+    from fcc import FCCScraper
+    FCC_DISPONIVEL = True
+except ImportError:
+    FCC_DISPONIVEL = False
+
 load_dotenv()
 logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(message)s")
 log = logging.getLogger(__name__)
@@ -462,6 +468,24 @@ def main():
                 log.error(f"[Fase 3] Erro IBFC: {e}")
         else:
             log.info("[Fase 3] IBFC não disponível (ibfc.py ausente)")
+
+        if FCC_DISPONIVEL:
+            log.info("[Fase 3] FCC...")
+            try:
+                fcc_scraper = FCCScraper(http)
+                concursos_fcc = fcc_scraper.scrape()
+                for c in concursos_fcc:
+                    slug   = fazer_slug(c["orgao"], c["fonte_url"])
+                    res_ex = supabase.table("concursos").select("id").eq("slug", slug).limit(1).execute()
+                    eh_novo = not bool(res_ex.data)
+                    cid = writer.salvar_banca(c)
+                    if cid and eh_novo:
+                        novos_ids.append(cid)
+                log.info(f"[Fase 3] FCC: {len(concursos_fcc)} concursos processados")
+            except Exception as e:
+                log.error(f"[Fase 3] Erro FCC: {e}")
+        else:
+            log.info("[Fase 3] FCC não disponível (fcc.py ausente)")
 
     disparar_alertas(supabase, novos_ids)
     log.info("=== Scraper v5 finalizado ===")
