@@ -101,6 +101,12 @@ export default async function ConcursoPage({ params }: Props) {
         >
           Fazer simulado
         </a>
+        <a
+          href={`/comparador?ids=${concurso.id}`}
+          className="inline-flex items-center gap-1.5 px-4 py-2 border border-slate-200 text-slate-700 text-sm font-medium rounded-lg hover:bg-slate-50 transition"
+        >
+          Comparar edital
+        </a>
       </div>
 
       {/* Cargos */}

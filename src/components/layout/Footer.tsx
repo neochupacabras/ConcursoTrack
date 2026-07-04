@@ -14,10 +14,10 @@ const COLUNAS = [
   {
     titulo: 'Ferramentas',
     links: [
-      { href: '/simulados',  label: 'Simulados' },
-      { href: '/alertas',    label: 'Alertas de editais' },
-      { href: '/calendario', label: 'Calendário de provas' },
-      { href: '/plano',      label: 'Assinar Pro' },
+      { href: '/simulados',   label: 'Simulados' },
+      { href: '/comparador',  label: 'Comparador de editais' },
+      { href: '/alertas',     label: 'Alertas de editais' },
+      { href: '/calendario',  label: 'Calendário de provas' },
     ],
   },
   {

@@ -6,9 +6,10 @@ import { getSupabaseBrowser } from '@/lib/supabase/browser'
 import type { User } from '@supabase/supabase-js'
 
 const NAV_LINKS = [
-  { href: '/busca',      label: 'Concursos' },
-  { href: '/calendario', label: 'Calendário' },
-  { href: '/dicas',      label: 'Dicas' },
+  { href: '/busca',       label: 'Concursos' },
+  { href: '/comparador',  label: 'Comparador' },
+  { href: '/calendario',  label: 'Calendário' },
+  { href: '/dicas',       label: 'Dicas' },
 ]
 
 export function Navbar() {
