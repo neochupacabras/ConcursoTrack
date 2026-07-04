@@ -181,7 +181,26 @@ def raspar_artigo(http, url):
                 paragrafos.append(txt)
 
             if paragrafos:
-                resultado["descricao"] = "\n\n".join(paragrafos)[:8000]
+                # O PCI termina todos os artigos com frases de propaganda
+                # Truncamos no ultimo paragrafo real do concurso
+                FRASES_FINAIS = [
+                    "mais informações podem ser obtidas no edital completo",
+                    "descubra como nossas apostilas digitais",
+                    "transforme sua leitura em escuta",
+                    "acompanhe mais detalhes no nosso podcast",
+                ]
+                paragrafos_limpos = []
+                for p in paragrafos:
+                    p_lower = p.lower()
+                    if any(f in p_lower for f in FRASES_FINAIS):
+                        # Inclui "Mais informações..." mas para ai
+                        if "mais informações podem ser obtidas" in p_lower:
+                            paragrafos_limpos.append(p)
+                        break
+                    paragrafos_limpos.append(p)
+
+                if paragrafos_limpos:
+                    resultado["descricao"] = "\n\n".join(paragrafos_limpos)[:8000]
 
     # Fallback: og:description se nao encontrou conteudo
     if not resultado["descricao"]:
@@ -203,20 +222,23 @@ def raspar_artigo(http, url):
                 url_final = href if href.startswith("http") else BASE_PCI + href
                 links_pdf.append({"titulo": texto[:200], "url": url_final})
 
-        # Tambem pega li sem classe .pdf que tenha link externo (ex: site da banca)
+        # Tambem pega li sem classe .pdf que tenha link externo (site da banca/orgao)
+        # Exclui li.li_provas (PROVAS RELACIONADAS aponta para acervo interno do PCI)
         for li in aside_links.find_all("li"):
-            if "pdf" in li.get("class", []):
+            classes_li = li.get("class", [])
+            if "pdf" in classes_li:
                 continue  # ja capturado acima
+            if "li_provas" in classes_li:
+                continue  # link interno do PCI, nao exibir
             a = li.find("a", href=True)
             if not a:
                 continue
             href  = a.get("href", "")
             texto = a.get_text(strip=True)
-            # So links externos (site da banca/orgao) e links de provas
+            # So links externos (site da banca/orgao)
             eh_externo = href.startswith("http") and "pciconcursos.com.br" not in href
-            eh_provas  = "/provas/" in href
-            if (eh_externo or eh_provas) and texto and len(texto) > 3:
-                url_final = href if href.startswith("http") else BASE_PCI + href
+            if eh_externo and texto and len(texto) > 3:
+                url_final = href
                 if not any(l["url"] == url_final for l in links_pdf):
                     links_pdf.append({"titulo": texto[:200], "url": url_final})
 
