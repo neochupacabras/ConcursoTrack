@@ -5,16 +5,13 @@ import { useRouter } from 'next/navigation'
 interface Props {
   concursoId:   string
   concursoNome: string | null
-  isPro:        boolean
 }
 
-export function IniciarSimuladoForm({ concursoId, concursoNome, isPro }: Props) {
+export function IniciarSimuladoForm({ concursoId, concursoNome }: Props) {
   const router = useRouter()
-  const [total, setTotal]     = useState(isPro ? 20 : 10)
-  const [erro, setErro]       = useState('')
-  const [isPending, start]    = useTransition()
-
-  const MAX = isPro ? 40 : 10
+  const [total, setTotal]   = useState(20)
+  const [erro, setErro]     = useState('')
+  const [isPending, start]  = useTransition()
 
   async function iniciar() {
     setErro('')
@@ -43,19 +40,13 @@ export function IniciarSimuladoForm({ concursoId, concursoNome, isPro }: Props) 
       <div className="mb-5">
         <label className="block text-xs font-medium text-slate-600 mb-2">
           Número de questões
-          {!isPro && (
-            <span className="ml-2 text-amber-600 font-normal">
-              (plano free: máximo 10 —{' '}
-              <a href="/plano" className="underline">assine o Pro</a> para até 40)
-            </span>
-          )}
         </label>
 
         <div className="flex items-center gap-4">
           <input
             type="range"
             min={5}
-            max={MAX}
+            max={40}
             step={5}
             value={total}
             onChange={(e) => setTotal(Number(e.target.value))}
@@ -68,23 +59,9 @@ export function IniciarSimuladoForm({ concursoId, concursoNome, isPro }: Props) 
 
         <div className="flex justify-between text-xs text-slate-400 mt-1">
           <span>5 questões</span>
-          <span>{MAX} questões {isPro && '(Pro)'}</span>
+          <span>40 questões</span>
         </div>
       </div>
-
-      {!isPro && (
-        <div className="flex items-start gap-2 bg-amber-50 border border-amber-100 rounded-lg px-3 py-2.5 mb-5 text-xs text-amber-800">
-          <svg className="w-3.5 h-3.5 mt-0.5 flex-shrink-0" viewBox="0 0 14 14" fill="none" stroke="currentColor" strokeWidth="1.5">
-            <circle cx="7" cy="7" r="6"/>
-            <path d="M7 4v3M7 10v.5" strokeLinecap="round"/>
-          </svg>
-          <span>
-            No plano gratuito, apenas questões não-premium são exibidas.{' '}
-            <a href="/plano" className="underline font-medium">Assine o Pro</a>{' '}
-            para acessar gabarito comentado e questões exclusivas.
-          </span>
-        </div>
-      )}
 
       {erro && (
         <p className="text-red-600 text-sm mb-4">{erro}</p>

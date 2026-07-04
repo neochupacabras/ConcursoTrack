@@ -11,26 +11,15 @@ export async function POST(request: Request) {
   }
 
   const body = await request.json()
-  const { concurso_id, total = 10 } = body
+  const { concurso_id, total = 20 } = body
 
   if (!concurso_id) {
     return NextResponse.json({ error: 'concurso_id obrigatório' }, { status: 400 })
   }
 
-  // Verifica plano do usuário
-  const { data: profile } = await supabase
-    .from('profiles')
-    .select('plano, plano_expira_em')
-    .eq('id', user.id)
-    .single()
-
-  const isPro = profile?.plano === 'pro' &&
-    (!profile.plano_expira_em || new Date(profile.plano_expira_em) > new Date())
-
-  // Limita questões para free
-  const limite = isPro ? Math.min(total, 40) : Math.min(total, 10)
-
-  const questoes = await getQuestoesPorConcurso(concurso_id, isPro, limite)
+  // Acesso livre — sem restrição de plano
+  const limite = Math.min(total, 40)
+  const questoes = await getQuestoesPorConcurso(concurso_id, true, limite)
 
   if (questoes.length === 0) {
     return NextResponse.json(

@@ -18,13 +18,7 @@ export default async function SimuladosPage({
   const sp = await searchParams
   const concursoId = sp.concurso
 
-  const [{ data: profile }, simulados] = await Promise.all([
-    supabase.from('profiles').select('plano, plano_expira_em').eq('id', user.id).single(),
-    getSimuladosDoUsuario(user.id),
-  ])
-
-  const isPro = profile?.plano === 'pro' &&
-    (!profile?.plano_expira_em || new Date(profile.plano_expira_em) > new Date())
+  const simulados = await getSimuladosDoUsuario(user.id)
 
   // Se veio de /concursos/[slug] com ?concurso=id, exibe o form de iniciar
   let concursoNome: string | null = null
@@ -41,11 +35,7 @@ export default async function SimuladosPage({
     <div className="max-w-4xl mx-auto px-4 py-10">
       <div className="flex items-baseline justify-between mb-8">
         <h1 className="text-2xl font-semibold text-slate-900">Simulados</h1>
-        {!isPro && (
-          <a href="/plano" className="text-xs text-blue-600 hover:underline">
-            Pro: até 40 questões por simulado →
-          </a>
-        )}
+
       </div>
 
       {/* Form de iniciar simulado */}
@@ -54,7 +44,6 @@ export default async function SimuladosPage({
           <IniciarSimuladoForm
             concursoId={concursoId}
             concursoNome={concursoNome}
-            isPro={isPro}
           />
         </div>
       )}

@@ -17,7 +17,6 @@ export default async function DashboardPage() {
     supabase.from('alertas').select('*').eq('user_id', user.id).eq('ativo', true),
   ])
 
-  const isPro = profile?.plano === 'pro'
   const mediaAcertos = simulados && simulados.length > 0
     ? Math.round(simulados.reduce((acc: number, s: Simulado) => acc + (s.acertos / s.total_questoes) * 100, 0) / simulados.length)
     : null
@@ -27,18 +26,9 @@ export default async function DashboardPage() {
       <div className="flex items-center justify-between mb-8">
         <div>
           <h1 className="text-2xl font-semibold">Olá, {profile?.nome?.split(' ')[0] ?? 'candidato'}</h1>
-          <p className="text-slate-500 text-sm mt-0.5">
-            Plano: <span className={isPro ? 'text-blue-600 font-medium' : 'text-slate-600'}>{isPro ? 'Pro' : 'Gratuito'}</span>
-          </p>
+
         </div>
-        {!isPro && (
-          <a
-            href="/plano"
-            className="px-4 py-2 bg-blue-600 text-white text-sm font-medium rounded-lg hover:bg-blue-700 transition"
-          >
-            Assinar Pro
-          </a>
-        )}
+
       </div>
 
       {/* Stats */}
