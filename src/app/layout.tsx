@@ -8,17 +8,39 @@ const inter = Inter({ subsets: ['latin'], variable: '--font-inter' })
 
 export const metadata: Metadata = {
   title: {
-    default: 'ConcursoTrack — Concursos Públicos do Brasil',
+    default:  'ConcursoTrack — Concursos Públicos do Brasil',
     template: '%s | ConcursoTrack',
   },
   description:
-    'Encontre editais abertos, simule provas e receba alertas de novos concursos públicos em todo o Brasil.',
-  keywords: ['concurso público', 'editais', 'simulado', 'CEBRASPE', 'FGV', 'IBGE', 'INSS'],
+    'Encontre editais abertos, simule provas e receba alertas de novos concursos públicos em todo o Brasil. Gratuito.',
+  keywords: [
+    'concurso público', 'editais abertos', 'simulado concurso', 'CEBRASPE',
+    'FGV', 'VUNESP', 'IBGE', 'INSS', 'concursos 2026', 'alertas concurso',
+  ],
+  authors: [{ name: 'ConcursoTrack' }],
+  creator: 'ConcursoTrack',
+  metadataBase: new URL('https://concursotrack.com.br'),
   openGraph: {
-    type: 'website',
-    locale: 'pt_BR',
-    url: 'https://concursotrack.com.br',
-    siteName: 'ConcursoTrack',
+    type:      'website',
+    locale:    'pt_BR',
+    url:       'https://concursotrack.com.br',
+    siteName:  'ConcursoTrack',
+    title:     'ConcursoTrack — Concursos Públicos do Brasil',
+    description: 'Editais abertos, simulados gratuitos e alertas de novos concursos públicos.',
+  },
+  twitter: {
+    card:        'summary_large_image',
+    title:       'ConcursoTrack — Concursos Públicos do Brasil',
+    description: 'Editais abertos, simulados gratuitos e alertas de novos concursos públicos.',
+  },
+  robots: {
+    index:  true,
+    follow: true,
+    googleBot: { index: true, follow: true, 'max-image-preview': 'large' },
+  },
+  verification: {
+    // Adicione aqui o código do Google Search Console após verificar
+    // google: 'SEU_CODIGO_AQUI',
   },
 }
 
