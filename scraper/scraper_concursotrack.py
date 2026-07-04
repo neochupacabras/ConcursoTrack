@@ -1,20 +1,10 @@
 """
-ConcursoTrack — Scraper de Editais v5
-=======================================
-Fase 1: Raspa a listagem /concursos/ (rapido, sem delay)
-Fase 2: Para concursos novos ou sem descricao, entra no artigo
-        do PCI e extrai texto completo, links de PDF e cargos.
-
-Dependencias:
-    pip install httpx beautifulsoup4 supabase python-dotenv
+ConcursoTrack Scraper v5
+Fase 1: listagem rapida em /concursos/
+Fase 2: enriquece artigos com seletores certeiros baseados em diagnostico HTML
 """
 
-import os
-import re
-import time
-import json
-import hashlib
-import logging
+import os, re, time, json, hashlib, logging
 from datetime import datetime, date, timezone
 from typing import Optional
 
@@ -29,12 +19,10 @@ log = logging.getLogger(__name__)
 
 SUPABASE_URL = os.environ["SUPABASE_URL"]
 SUPABASE_KEY = os.environ["SUPABASE_SERVICE_KEY"]
-
-HEADERS = {
-    "User-Agent": "Mozilla/5.0 (compatible; ConcursoTrackBot/1.0; +https://concursotrack.com.br/bot)",
+HEADERS      = {
+    "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36",
     "Accept-Language": "pt-BR,pt;q=0.9",
 }
-
 URL_LISTAGEM = "https://www.pciconcursos.com.br/concursos/"
 BASE_PCI     = "https://www.pciconcursos.com.br"
 DELAY_ARTIGO = 1.5
@@ -51,7 +39,6 @@ ESFERA_KEYWORDS = {
                   "tribunal de justica","pmes","cbm","pm -","pc -","tce-","tce "],
     "municipal": ["prefeitura","camara municipal","camara de","saae","samae","guarda municipal"],
 }
-
 AREA_KEYWORDS = {
     "fiscal_tributaria":  ["fiscal","tributario","receita","fazenda","auditor","dataprev","sefaz"],
     "seguranca_publica":  ["policial","delegado","perito","agente penitenciario",
@@ -66,7 +53,7 @@ AREA_KEYWORDS = {
 
 
 def extrair_uf(title):
-    m = re.search(r"-\s*([A-Z]{2})\s*[:]\s*", title)
+    m = re.search(r"-\s*([A-Z]{2})\s*[:]", title)
     if m and m.group(1) in UFS:
         return m.group(1)
     return None
@@ -105,6 +92,10 @@ def fazer_slug(orgao, fonte_url):
     return f"{base}-{hashlib.md5(fonte_url.encode()).hexdigest()[:6]}"
 
 
+# ---------------------------------------------------------------------------
+# Fase 1 — listagem /concursos/
+# ---------------------------------------------------------------------------
+
 def raspar_listagem(http):
     log.info(f"[Fase 1] {URL_LISTAGEM}")
     try:
@@ -121,7 +112,8 @@ def raspar_listagem(http):
         title = a.get("title", "")
         orgao = a.get_text(strip=True)
         if not title or len(orgao) < 5: continue
-        if orgao.lower() in ("noticias","notícias","nacional","sudeste","sul","norte","nordeste","centro-oeste"): continue
+        if orgao.lower() in ("noticias","notícias","nacional","sudeste","sul",
+                             "norte","nordeste","centro-oeste"): continue
         if href in vistos: continue
         vistos.add(href)
         pai = a.find_parent()
@@ -142,138 +134,101 @@ def raspar_listagem(http):
     return concursos
 
 
+# ---------------------------------------------------------------------------
+# Fase 2 — enriquecimento com seletores certeiros
+# ---------------------------------------------------------------------------
+
 def raspar_artigo(http, url):
     """
-    Extrai conteudo do artigo do PCI usando meta tags (og:description, description)
-    que ja vem limpo pelo PCI para fins de SEO — sem os widgets de apostila
-    e listas laterais que contaminam o HTML.
-    Para links de PDF, usa o og:description complementado pelos links da pagina
-    filtrando apenas os que estao em blocos de "Links" identificaveis.
+    Estrutura confirmada pelo diagnostico_pci.py:
+
+    DESCRICAO:
+      article#noticia > div (sem id/classe) com os <p> diretos do artigo
+      Os <p> tem avô article#noticia — seletor: article#noticia > div > p
+      Excluir: aside#preparacao, aside#podcast, asides sem id, div#lateral
+
+    PDFs:
+      aside#links li.pdf a — seletor exato, sem ambiguidade
+      Os hrefs sao do dominio arq.pciconcursos.com.br
     """
     resultado = {"descricao": None, "links_pdf": None}
     try:
         r = http.get(url, timeout=15)
         r.raise_for_status()
     except httpx.HTTPError as e:
-        log.warning(f"Erro artigo {url}: {e}"); return resultado
+        log.warning(f"Erro {url}: {e}"); return resultado
 
     soup = BeautifulSoup(r.text, "html.parser")
 
-    # ----- Descricao: usa meta tags que o PCI ja limpa para SEO -----
-    descricao = None
-
-    # 1. og:description — geralmente o texto mais completo e limpo
-    og_desc = soup.find("meta", property="og:description")
-    if og_desc and og_desc.get("content"):
-        descricao = og_desc["content"].strip()
-
-    # 2. Fallback: meta name="description"
-    if not descricao or len(descricao) < 50:
-        meta_desc = soup.find("meta", attrs={"name": "description"})
-        if meta_desc and meta_desc.get("content"):
-            descricao = meta_desc["content"].strip()
-
-    # 3. Fallback: busca paragrafos dentro do bloco de conteudo principal
-    # identificado por ser o maior bloco de texto continuo da pagina
-    if not descricao or len(descricao) < 50:
-        candidatos = []
-        for div in soup.find_all(["div", "article", "section"]):
+    # ---- Descricao: article#noticia > div > p ----
+    noticia = soup.select_one("article#noticia")
+    if noticia:
+        # Pega a div direta que contem os paragrafos do artigo
+        # (e nao as divs de description/sharelink/breadcrumbs)
+        div_conteudo = None
+        for div in noticia.find_all("div", recursive=False):
             ps = div.find_all("p", recursive=False)
-            if len(ps) >= 3:
-                texto = " ".join(p.get_text(strip=True) for p in ps)
-                if len(texto) > 200:
-                    candidatos.append((len(texto), texto))
-        if candidatos:
-            descricao = max(candidatos, key=lambda x: x[0])[1][:8000]
+            if len(ps) >= 2:
+                div_conteudo = div
+                break
 
-    if descricao and len(descricao) > 50:
-        resultado["descricao"] = descricao[:8000]
+        if div_conteudo:
+            paragrafos = []
+            for p in div_conteudo.find_all("p", recursive=False):
+                txt = p.get_text(" ", strip=True)
+                if len(txt) < 20:
+                    continue
+                paragrafos.append(txt)
 
-    # ----- Links de PDF: busca apenas dentro do bloco "Links" do PCI -----
-    # O PCI tem um bloco especifico com id ou classe para os PDFs do concurso
+            if paragrafos:
+                resultado["descricao"] = "\n\n".join(paragrafos)[:8000]
+
+    # Fallback: og:description se nao encontrou conteudo
+    if not resultado["descricao"]:
+        og = soup.find("meta", property="og:description")
+        if og and og.get("content"):
+            resultado["descricao"] = og["content"].strip()
+
+    # ---- PDFs: aside#links li.pdf a ----
     links_pdf = []
-
-    # Tenta encontrar o container de links do concurso (costuma ter "Links" como heading)
-    bloco_links = None
-    for heading in soup.find_all(["h2", "h3", "h4", "strong", "b"]):
-        if heading.get_text(strip=True).lower() in ("links", "documentos", "editais", "arquivos"):
-            bloco_links = heading.find_parent()
-            break
-
-    # Se encontrou o bloco, extrai apenas os links de dentro dele
-    if bloco_links:
-        for a in bloco_links.find_all("a", href=True):
-            href  = a.get("href", "")
-            texto = a.get_text(strip=True)
-            if not href or len(texto) < 3: continue
-            # So aceita .pdf ou links externos que nao sejam /noticias/
-            eh_pdf = ".pdf" in href.lower()
-            eh_externo = href.startswith("http") and "pciconcursos.com.br" not in href
-            if (eh_pdf or eh_externo) and not "/noticias/" in href:
-                url_final = href if href.startswith("http") else BASE_PCI + href
-                if not any(l["url"] == url_final for l in links_pdf):
-                    links_pdf.append({"titulo": texto[:200], "url": url_final})
-    else:
-        # Fallback: varre a pagina inteira mas so aceita .pdf
-        for a in soup.select("a[href]"):
-            href  = a.get("href", "")
-            texto = a.get_text(strip=True)
-            if ".pdf" in href.lower() and len(texto) > 3:
-                url_final = href if href.startswith("http") else BASE_PCI + href
-                if not any(l["url"] == url_final for l in links_pdf):
-                    links_pdf.append({"titulo": texto[:200], "url": url_final})
-
-    if links_pdf:
-        resultado["links_pdf"] = links_pdf[:20]
-
-    # Links de PDF — apenas arquivos .pdf ou links externos (fora do PCI)
-    # Exclui links para /noticias/ (outros artigos do PCI) que contaminam a lista
-    links_pdf = []
-    for a in soup.select("a[href]"):
-        href  = a.get("href", "")
-        texto = a.get_text(strip=True)
-
-        if not href or len(texto) < 3:
-            continue
-
-        # Ignora links internos do PCI que não sejam PDFs
-        eh_interno_pci = (
-            href.startswith("/noticias/") or
-            href.startswith("/concursos/") or
-            "pciconcursos.com.br/noticias" in href or
-            "pciconcursos.com.br/concursos" in href
-        )
-        if eh_interno_pci:
-            continue
-
-        # Aceita apenas se: for .pdf OU for link externo (outro domínio)
-        eh_pdf_real    = ".pdf" in href.lower()
-        eh_externo     = href.startswith("http") and "pciconcursos.com.br" not in href
-        # Links do próprio PCI sem /noticias/ (ex: /downloads/) também valem
-        eh_pci_recurso = (href.startswith("/") and
-                          not href.startswith("/noticias/") and
-                          not href.startswith("/concursos/"))
-
-        if not (eh_pdf_real or eh_externo or eh_pci_recurso):
-            continue
-
-        # Para links externos sem .pdf, exige palavra indicativa no texto
-        if eh_externo and not eh_pdf_real:
-            palavras_doc = ["edital", "retific", "gabarito", "resultado",
-                            "homolog", "inscri", "concurso", "fundatec",
-                            "vunesp", "cebraspe", "cespe", "fgv", "ibfc"]
-            if not any(p in texto.lower() for p in palavras_doc):
+    aside_links = soup.select_one("aside#links")
+    if aside_links:
+        for li in aside_links.select("li.pdf"):
+            a = li.find("a", href=True)
+            if not a:
                 continue
+            href  = a.get("href", "")
+            texto = a.get_text(strip=True)
+            if href and texto:
+                url_final = href if href.startswith("http") else BASE_PCI + href
+                links_pdf.append({"titulo": texto[:200], "url": url_final})
 
-        url_final = href if href.startswith("http") else BASE_PCI + href
-        if not any(l["url"] == url_final for l in links_pdf):
-            links_pdf.append({"titulo": texto[:200], "url": url_final})
+        # Tambem pega li sem classe .pdf que tenha link externo (ex: site da banca)
+        for li in aside_links.find_all("li"):
+            if "pdf" in li.get("class", []):
+                continue  # ja capturado acima
+            a = li.find("a", href=True)
+            if not a:
+                continue
+            href  = a.get("href", "")
+            texto = a.get_text(strip=True)
+            # So links externos (site da banca/orgao) e links de provas
+            eh_externo = href.startswith("http") and "pciconcursos.com.br" not in href
+            eh_provas  = "/provas/" in href
+            if (eh_externo or eh_provas) and texto and len(texto) > 3:
+                url_final = href if href.startswith("http") else BASE_PCI + href
+                if not any(l["url"] == url_final for l in links_pdf):
+                    links_pdf.append({"titulo": texto[:200], "url": url_final})
 
     if links_pdf:
         resultado["links_pdf"] = links_pdf[:20]
 
     return resultado
 
+
+# ---------------------------------------------------------------------------
+# Persistencia
+# ---------------------------------------------------------------------------
 
 class SupabaseWriter:
     def __init__(self, db):
@@ -299,7 +254,7 @@ class SupabaseWriter:
             res = self.db.table("concursos").upsert(payload, on_conflict="slug").execute()
             return res.data[0]["id"] if res.data else None
         except Exception as e:
-            log.error(f"Erro ao salvar '{c['orgao']}': {e}"); return None
+            log.error(f"Erro salvar '{c['orgao']}': {e}"); return None
 
     def precisa_enriquecer(self, slug):
         try:
@@ -319,6 +274,10 @@ class SupabaseWriter:
         except Exception as e:
             log.warning(f"Erro enriquecer '{slug}': {e}"); return False
 
+
+# ---------------------------------------------------------------------------
+# Alertas
+# ---------------------------------------------------------------------------
 
 def disparar_alertas(db, novos_ids):
     if not novos_ids: return 0
@@ -340,6 +299,10 @@ def disparar_alertas(db, novos_ids):
     return len(fila)
 
 
+# ---------------------------------------------------------------------------
+# Main
+# ---------------------------------------------------------------------------
+
 def main():
     log.info("=== ConcursoTrack Scraper v5 ===")
     supabase = create_client(SUPABASE_URL, SUPABASE_KEY)
@@ -350,8 +313,8 @@ def main():
         salvos, novos_ids, para_enriquecer = 0, [], []
 
         for c in concursos:
-            slug    = fazer_slug(c["orgao"], c["fonte_url"])
-            res_ex  = supabase.table("concursos").select("id").eq("slug", slug).limit(1).execute()
+            slug   = fazer_slug(c["orgao"], c["fonte_url"])
+            res_ex = supabase.table("concursos").select("id").eq("slug", slug).limit(1).execute()
             eh_novo = not bool(res_ex.data)
             cid     = writer.salvar(c)
             if cid:
@@ -362,9 +325,9 @@ def main():
 
         log.info(f"[Fase 1] Salvos: {salvos}/{len(concursos)} | Novos: {len(novos_ids)} | Para enriquecer: {len(para_enriquecer)}")
 
-        enriquecidos = 0
         total = min(len(para_enriquecer), MAX_ARTIGOS)
         log.info(f"[Fase 2] Enriquecendo {total} artigos...")
+        enriquecidos = 0
         for item in para_enriquecer[:MAX_ARTIGOS]:
             dados = raspar_artigo(http, item["fonte_url"])
             if dados["descricao"] or dados["links_pdf"]:
