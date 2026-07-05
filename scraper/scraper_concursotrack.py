@@ -187,6 +187,78 @@ def raspar_listagem(http):
 # Fase 2 — enriquecimento com seletores certeiros
 # ---------------------------------------------------------------------------
 
+MESES_PT = {
+    "janeiro": 1, "fevereiro": 2, "março": 3, "marco": 3, "abril": 4, "maio": 5,
+    "junho": 6, "julho": 7, "agosto": 8, "setembro": 9, "outubro": 10,
+    "novembro": 11, "dezembro": 12,
+}
+_PADRAO_DATA_EXTENSO = re.compile(
+    r"(\d{1,2})\s+de\s+(" + "|".join(MESES_PT.keys()) + r")\s+de\s+(\d{4})",
+    re.IGNORECASE,
+)
+
+
+def _todas_datas_com_posicao(texto: str) -> list[tuple]:
+    """Acha toda data no texto (numérica DD/MM/YYYY ou por extenso 'DD de mês de YYYY',
+    formato comum nas notícias do PCI) junto da posição onde apareceu no texto —
+    a posição é usada depois pra ver qual palavra-chave está por perto."""
+    resultados = []
+    for m in re.finditer(r"(\d{1,2})/(\d{1,2})/(\d{4})", texto):
+        try:
+            resultados.append((date(int(m.group(3)), int(m.group(2)), int(m.group(1))), m.start(), m.end()))
+        except ValueError:
+            pass
+    for m in _PADRAO_DATA_EXTENSO.finditer(texto):
+        try:
+            mes = MESES_PT[m.group(2).lower()]
+            resultados.append((date(int(m.group(3)), mes, int(m.group(1))), m.start(), m.end()))
+        except ValueError:
+            pass
+    return resultados
+
+
+def _contexto_antes(texto: str, ini: int, largura: int = 100) -> str:
+    """Texto antes da posição `ini`, restrito à frase atual (corta no último
+    ponto final dentro da janela) — evita que uma palavra-chave de uma frase
+    anterior "vaze" e contamine a classificação de uma data não relacionada."""
+    janela = texto[max(0, ini - largura):ini]
+    pos_ponto = janela.rfind(".")
+    if pos_ponto != -1:
+        janela = janela[pos_ponto + 1:]
+    return janela.lower()
+
+
+def extrair_datas_contextualizadas(texto: str) -> dict:
+    """
+    Varre o texto inteiro do artigo (não só o card resumido da listagem) e
+    classifica cada data encontrada pela palavra-chave mais próxima, dentro da
+    MESMA FRASE: "inscri..." = data de inscrição (abertura/encerramento),
+    "prova" = data da prova. Datas sem nenhuma dessas palavras na mesma frase
+    são ignoradas (podem ser data de publicação da notícia, por exemplo).
+    """
+    resultado = {"data_abertura": None, "data_encerramento": None, "data_prova": None}
+    datas_inscricao, datas_prova = [], []
+
+    for data_encontrada, ini, fim in _todas_datas_com_posicao(texto):
+        contexto = _contexto_antes(texto, ini)
+        if "prova" in contexto:
+            datas_prova.append(data_encontrada)
+        elif "inscri" in contexto:
+            datas_inscricao.append(data_encontrada)
+
+    if len(datas_inscricao) >= 2:
+        datas_ordenadas = sorted(set(datas_inscricao))
+        resultado["data_abertura"]     = datas_ordenadas[0]
+        resultado["data_encerramento"] = datas_ordenadas[-1]
+    elif len(datas_inscricao) == 1:
+        resultado["data_encerramento"] = datas_inscricao[0]
+
+    if datas_prova:
+        resultado["data_prova"] = max(datas_prova)
+
+    return resultado
+
+
 def raspar_artigo(http, url):
     """
     Estrutura confirmada pelo diagnostico_pci.py:
@@ -200,7 +272,10 @@ def raspar_artigo(http, url):
       aside#links li.pdf a — seletor exato, sem ambiguidade
       Os hrefs sao do dominio arq.pciconcursos.com.br
     """
-    resultado = {"descricao": None, "links_pdf": None}
+    resultado = {
+        "descricao": None, "links_pdf": None,
+        "data_abertura": None, "data_encerramento": None, "data_prova": None,
+    }
     try:
         r = http.get(url, timeout=15)
         r.raise_for_status()
@@ -208,6 +283,15 @@ def raspar_artigo(http, url):
         log.warning(f"Erro {url}: {e}"); return resultado
 
     soup = BeautifulSoup(r.text, "html.parser")
+
+    # ---- Datas: varre o artigo inteiro (mais completo que o card da listagem) ----
+    noticia_para_datas = soup.select_one("article#noticia")
+    if noticia_para_datas:
+        texto_artigo_completo = noticia_para_datas.get_text(" ")
+        datas = extrair_datas_contextualizadas(texto_artigo_completo)
+        resultado["data_abertura"]     = datas["data_abertura"]
+        resultado["data_encerramento"] = datas["data_encerramento"]
+        resultado["data_prova"]        = datas["data_prova"]
 
     # ---- Descricao: article#noticia > div > p ----
     noticia = soup.select_one("article#noticia")
@@ -325,9 +409,10 @@ class SupabaseWriter:
 
     def precisa_enriquecer(self, slug):
         try:
-            res = self.db.table("concursos").select("descricao").eq("slug", slug).limit(1).execute()
+            res = self.db.table("concursos").select("descricao, datas_verificadas").eq("slug", slug).limit(1).execute()
             if not res.data: return True
-            return not res.data[0].get("descricao")
+            linha = res.data[0]
+            return not linha.get("descricao") or not linha.get("datas_verificadas")
         except: return False
 
     def salvar_banca(self, c):
@@ -361,10 +446,12 @@ class SupabaseWriter:
 
     def atualizar_enriquecimento(self, slug, dados):
         try:
-            payload = {}
+            payload = {"datas_verificadas": True}
             if dados.get("descricao"): payload["descricao"] = dados["descricao"]
             if dados.get("links_pdf"): payload["links_pdf"] = json.dumps(dados["links_pdf"], ensure_ascii=False)
-            if not payload: return False
+            if dados.get("data_abertura"):     payload["data_abertura"]     = dados["data_abertura"].isoformat()
+            if dados.get("data_encerramento"): payload["data_encerramento"] = dados["data_encerramento"].isoformat()
+            if dados.get("data_prova"):        payload["data_prova"]        = dados["data_prova"].isoformat()
             self.db.table("concursos").update(payload).eq("slug", slug).execute()
             return True
         except Exception as e:
