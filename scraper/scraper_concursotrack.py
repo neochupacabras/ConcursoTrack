@@ -230,21 +230,17 @@ def raspar_artigo(http, url):
                 paragrafos.append(txt)
 
             if paragrafos:
-                # O PCI termina todos os artigos com frases de propaganda
-                # Truncamos no ultimo paragrafo real do concurso
-                FRASES_FINAIS = [
-                    "mais informações podem ser obtidas no edital completo",
-                    "descubra como nossas apostilas digitais",
-                    "transforme sua leitura em escuta",
-                    "acompanhe mais detalhes no nosso podcast",
-                ]
+                # O PCI termina os artigos com propaganda (apostilas, podcast), mas a
+                # REDAÇÃO EXATA varia entre notícias ("no edital completo" vs "nos
+                # editais completos", "descubra..." vs "Maximize seu potencial...").
+                # Por isso não tentamos prever a frase inteira — usamos palavras-chave
+                # estáveis (os nomes dos produtos que eles sempre promovem), que não
+                # mudam mesmo quando a frase ao redor muda.
+                PALAVRAS_PROPAGANDA = ["apostila", "podcast"]
                 paragrafos_limpos = []
                 for p in paragrafos:
                     p_lower = p.lower()
-                    if any(f in p_lower for f in FRASES_FINAIS):
-                        # Inclui "Mais informações..." mas para ai
-                        if "mais informações podem ser obtidas" in p_lower:
-                            paragrafos_limpos.append(p)
+                    if any(palavra in p_lower for palavra in PALAVRAS_PROPAGANDA):
                         break
                     paragrafos_limpos.append(p)
 
