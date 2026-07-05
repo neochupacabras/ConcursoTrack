@@ -399,10 +399,55 @@ def disparar_alertas(db, novos_ids):
 # Main
 # ---------------------------------------------------------------------------
 
+# ---------------------------------------------------------------------------
+# Fase 0 — corrige status desatualizado (concursos "aberto" com prazo vencido)
+# ---------------------------------------------------------------------------
+
+def atualizar_status_vencidos(db) -> int:
+    """
+    O status de um concurso só é setado no momento em que ele é raspado — se
+    ele sai da listagem de origem (porque encerrou) antes do scraper rodar de
+    novo, nada nunca volta pra atualizar o status, e ele fica "aberto" pra
+    sempre mesmo com a data de inscrição no passado. Essa varredura corrige
+    isso: qualquer concurso "aberto" com data_encerramento < hoje vira
+    "encerrado". Comparação de data pura, sem ambiguidade — seguro rodar
+    automaticamente a cada execução (diferente da mesclagem por nome de
+    órgão, que precisa de revisão manual).
+    """
+    hoje = date.today().isoformat()
+    try:
+        res = (
+            db.table("concursos")
+            .select("id")
+            .eq("status", "aberto")
+            .lt("data_encerramento", hoje)
+            .execute()
+        )
+        ids = [r["id"] for r in (res.data or [])]
+    except Exception as e:
+        log.error(f"[Fase 0] Erro ao buscar concursos vencidos: {e}")
+        return 0
+
+    if not ids:
+        log.info("[Fase 0] Nenhum concurso 'aberto' com prazo vencido encontrado")
+        return 0
+
+    try:
+        db.table("concursos").update({"status": "encerrado"}).in_("id", ids).execute()
+    except Exception as e:
+        log.error(f"[Fase 0] Erro ao atualizar status: {e}")
+        return 0
+
+    log.info(f"[Fase 0] {len(ids)} concursos corrigidos de 'aberto' pra 'encerrado' (prazo já vencido)")
+    return len(ids)
+
+
 def main():
     log.info("=== ConcursoTrack Scraper v5 ===")
     supabase = create_client(SUPABASE_URL, SUPABASE_KEY)
     writer   = SupabaseWriter(supabase)
+
+    atualizar_status_vencidos(supabase)
 
     with httpx.Client(headers=HEADERS, follow_redirects=True) as http:
         concursos = raspar_listagem(http)
