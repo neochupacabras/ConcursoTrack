@@ -194,16 +194,14 @@ def _raspar_detalhe(http: httpx.Client, url: str) -> dict:
     if not soup:
         return resultado
 
-    # Status
+    # Status (produto só aceita aberto/encerrado/suspenso/previsto — sem "em_andamento")
     opcao = soup.select_one("#opcaoConcursos")
     if opcao:
         txt = opcao.get_text(strip=True).lower()
         if "inscrições abertas" in txt:
             resultado["status"] = "aberto"
-        elif "encerrado" in txt or "finalizado" in txt:
-            resultado["status"] = "encerrado"
         else:
-            resultado["status"] = "em_andamento"
+            resultado["status"] = "encerrado"
 
     # Datas — procura em #comunicacao e em todo o texto da página
     comunicacao = soup.select_one("#comunicacao")

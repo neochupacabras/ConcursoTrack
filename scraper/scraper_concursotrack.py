@@ -57,7 +57,7 @@ except ImportError:
     AVALIA_DISPONIVEL = False
 
 try:
-    from mesclar_duplicatas import mesclar_duplicatas
+    from mesclar_duplicatas import gerar_relatorio
     MESCLAGEM_DISPONIVEL = True
 except ImportError:
     MESCLAGEM_DISPONIVEL = False
@@ -568,11 +568,13 @@ def main():
     disparar_alertas(supabase, novos_ids)
 
     if MESCLAGEM_DISPONIVEL:
-        log.info("[Fase 4] Mesclando duplicatas entre PCI e bancas dedicadas...")
+        log.info("[Fase 4] Gerando relatório de possíveis duplicatas (PCI x bancas dedicadas)...")
+        log.info("[Fase 4] Esta etapa só LÊ e reporta — não aplica nada automaticamente. "
+                  "Revise o relatório e rode aplicar_mesclagem.py manualmente pros pares aprovados.")
         try:
-            mesclar_duplicatas(supabase)
+            gerar_relatorio(supabase)
         except Exception as e:
-            log.error(f"[Fase 4] Erro na mesclagem: {e}")
+            log.error(f"[Fase 4] Erro ao gerar relatório: {e}")
     else:
         log.info("[Fase 4] Mesclagem não disponível (mesclar_duplicatas.py ausente)")
 

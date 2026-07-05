@@ -275,10 +275,12 @@ class FGVScraper:
             partes = re.split(r" [-–] ", orgao, maxsplit=1)
             orgao = partes[0].strip()
 
-            # Se as inscrições já encerraram, marca como em_andamento
+            # Se as inscrições já encerraram, o produto trata como "encerrado"
+            # (o banco tem uma constraint que só aceita aberto/encerrado/suspenso/previsto —
+            # "em_andamento" não existe como valor válido e quebra o insert)
             data_enc = detalhe["data_encerramento"]
             from datetime import date as _date
-            status = "aberto" if (not data_enc or data_enc >= _date.today()) else "em_andamento"
+            status = "aberto" if (not data_enc or data_enc >= _date.today()) else "encerrado"
 
             concursos.append({
                 "banca":             self.BANCA,

@@ -1,23 +1,25 @@
 """
-ConcursoTrack — Mesclagem de duplicatas entre fontes (Fase 4)
-==============================================================
-Problema: cada scraper (PCI genérico + bancas dedicadas: Cebraspe, FGV, IBFC,
-FCC, Consulplan, Quadrix, Avalia) salva sua própria linha em `concursos`, com
-slug baseado em orgao+fonte_url. Como a fonte_url de cada site é diferente, o
-MESMO concurso do mundo real pode virar duas linhas — uma vinda do PCI
-(genérico, sempre roda primeiro) e outra vinda da banca dedicada (com PDFs e
-datas mais confiáveis). Isso faz o mesmo concurso aparecer duplicado na busca,
-já que a query de busca não deduplica por órgão.
+ConcursoTrack — Relatório de possíveis duplicatas entre fontes (Fase 4)
+==========================================================================
+Contexto: a primeira versão desta etapa aplicava a mesclagem automaticamente
+e teve uma taxa de falso positivo de ~67% em produção (14 de 21 mesclagens
+feitas eram órgãos/cidades/estados diferentes — ex: "UESB (Bahia)" mesclado
+com "UENP (Paraná)", "Itapetininga/SP" mesclado com "Piratininga/SP"). Nomes
+de instituições públicas brasileiras têm moldes muito parecidos (ex:
+"Secretaria de Estado da Saúde de X", "Universidade Estadual de Y",
+"Prefeitura de Z") que enganam similaridade de texto mesmo com veto de UF.
 
-Esta etapa roda depois de todas as fases de scraping e:
-1. Encontra pares (linha do PCI, linha de banca dedicada) que provavelmente são
-   o mesmo concurso, comparando nome do órgão (fuzzy, ignorando palavras
-   genéricas tipo "concurso público") + estado, quando ambos tiverem UF.
-2. Preenche campos vazios da linha "primária" (banca dedicada, mais confiável)
-   com dados da linha do PCI quando fizer sentido — hoje só total_vagas.
-3. Marca a linha do PCI como oculto=true (some da busca), sem deletar — deletar
-   quebraria FKs de simulados/questoes/notificacoes_fila que podem referenciar
-   o id da linha do PCI.
+Por isso esta etapa AGORA SÓ GERA RELATÓRIO — nunca escreve no banco sozinha.
+Rodar automaticamente (Fase 4 do scraper_concursotrack.py) é seguro porque só
+lê e imprime/salva um relatório; a aplicação real exige rodar
+aplicar_mesclagem.py manualmente, revisando cada par antes.
+
+Fluxo:
+  1. Fase 4 do scraper roda gerar_relatorio() automaticamente → só loga
+     candidatos a mesclagem, sem tocar no banco.
+  2. Você revisa os candidatos (aqui ou no arquivo relatorio_mesclagem.txt).
+  3. Você roda `python scraper/aplicar_mesclagem.py <pci_id_1> <pci_id_2> ...`
+     só com os IDs que você aprovou manualmente.
 
 PRÉ-REQUISITO — rodar uma vez no SQL Editor do Supabase antes do primeiro uso:
 
@@ -25,8 +27,6 @@ PRÉ-REQUISITO — rodar uma vez no SQL Editor do Supabase antes do primeiro uso
     ALTER TABLE concursos ADD COLUMN IF NOT EXISTS mesclado_com uuid REFERENCES concursos(id);
 
 E atualizar a query de busca (src/lib/queries.ts) pra filtrar .eq('oculto', false).
-
-Uso: chamado por scraper_concursotrack.py depois da Fase 3 (ou standalone).
 """
 
 import re
@@ -45,9 +45,22 @@ PALAVRAS_IGNORAR = {
     "prefeitura", "municipal", "municipio", "estado", "governo", "publica",
 }
 
+UFS = {"AC", "AL", "AM", "AP", "BA", "CE", "DF", "ES", "GO", "MA", "MG", "MS", "MT",
+       "PA", "PB", "PE", "PI", "PR", "RJ", "RN", "RO", "RR", "RS", "SC", "SE", "SP", "TO"}
+
+ESTADOS_NOME = {
+    "acre": "AC", "alagoas": "AL", "amazonas": "AM", "amapa": "AP", "bahia": "BA",
+    "ceara": "CE", "distrito federal": "DF", "espirito santo": "ES", "goias": "GO",
+    "maranhao": "MA", "mato grosso do sul": "MS", "mato grosso": "MT",
+    "minas gerais": "MG", "para": "PA", "paraiba": "PB", "parana": "PR",
+    "pernambuco": "PE", "piaui": "PI", "rio de janeiro": "RJ",
+    "rio grande do norte": "RN", "rio grande do sul": "RS", "rondonia": "RO",
+    "roraima": "RR", "santa catarina": "SC", "sao paulo": "SP", "sergipe": "SE",
+    "tocantins": "TO",
+}
+
 
 def _normalizar(texto: str) -> str:
-    """Remove acentos, pontuação e palavras genéricas — sobra só o 'núcleo' do nome."""
     texto = unicodedata.normalize("NFKD", texto).encode("ascii", "ignore").decode()
     texto = texto.lower()
     texto = re.sub(r"[^a-z0-9\s]", " ", texto)
@@ -55,13 +68,18 @@ def _normalizar(texto: str) -> str:
     return " ".join(palavras)
 
 
+def _detectar_uf_do_texto(texto: str) -> Optional[str]:
+    sem_acento = unicodedata.normalize("NFKD", texto).encode("ascii", "ignore").decode().lower()
+    m = re.search(r"[/\-]\s*([A-Z]{2})\b", texto)
+    if m and m.group(1) in UFS:
+        return m.group(1)
+    for nome, uf in ESTADOS_NOME.items():
+        if nome in sem_acento:
+            return uf
+    return None
+
+
 def _extrair_sigla(texto: str) -> Optional[str]:
-    """
-    Extrai a sigla da instituição quando ela aparece explícita, tipo
-    "Instituto Federal da Bahia - IFBA" ou "Universidade Federal (UFBA)".
-    Usada como veto: duas siglas diferentes = instituições diferentes,
-    mesmo que o resto do nome seja parecido (ex: IFBA vs UFBA).
-    """
     m = re.search(r"[-–—]\s*([A-ZÀ-Ú]{2,8})\s*(?:/[A-Z]{2})?\s*$", texto)
     if m:
         return m.group(1).upper()
@@ -82,8 +100,17 @@ def _siglas_conflitam(a: str, b: str) -> bool:
     return True
 
 
+def _ufs_conflitam(a: str, b: str) -> bool:
+    uf_a, uf_b = _detectar_uf_do_texto(a), _detectar_uf_do_texto(b)
+    if not uf_a or not uf_b:
+        return False
+    return uf_a != uf_b
+
+
 def _similaridade(a: str, b: str) -> float:
     if _siglas_conflitam(a, b):
+        return 0.0
+    if _ufs_conflitam(a, b):
         return 0.0
     na, nb = _normalizar(a), _normalizar(b)
     if not na or not nb:
@@ -91,14 +118,12 @@ def _similaridade(a: str, b: str) -> float:
     return SequenceMatcher(None, na, nb).ratio()
 
 
-def mesclar_duplicatas(db) -> dict:
+def encontrar_candidatos(db) -> list[dict]:
     """
-    Busca concursos ativos e não ocultos, separa em (PCI) vs (bancas dedicadas),
-    e tenta casar cada linha dedicada com a melhor candidata do PCI pelo nome do
-    órgão + estado. Quando acha, preenche vagas faltantes e oculta a linha do PCI.
+    Só LEITURA — busca concursos ativos não ocultos, separa PCI vs bancas
+    dedicadas, e calcula o melhor candidato de cada dedicada dentre o PCI.
+    Não escreve nada no banco. Retorna a lista de candidatos com score.
     """
-    resultado = {"mesclados": 0, "vagas_preenchidas": 0, "erro": None}
-
     try:
         res = db.table("concursos").select(
             "id, orgao, estado, total_vagas, fonte_url, oculto"
@@ -113,8 +138,7 @@ def mesclar_duplicatas(db) -> dict:
             )
         else:
             log.error(f"[Mesclagem] Erro ao buscar concursos: {e}")
-        resultado["erro"] = msg
-        return resultado
+        return []
 
     pci, dedicadas = [], []
     for linha in linhas:
@@ -123,23 +147,14 @@ def mesclar_duplicatas(db) -> dict:
         else:
             dedicadas.append(linha)
 
-    log.info(f"[Mesclagem] {len(dedicadas)} linhas de bancas dedicadas, {len(pci)} linhas do PCI")
-
+    candidatos = []
     pci_usados = set()
 
     for primaria in dedicadas:
         melhor_match, melhor_score = None, 0.0
-
         for candidato in pci:
             if candidato["id"] in pci_usados:
                 continue
-            # Exige mesmo estado quando ambos tiverem UF preenchida (evita casar
-            # órgãos de mesmo nome em estados diferentes, ex: duas "Câmara Municipal")
-            uf_primaria  = primaria.get("estado")
-            uf_candidato = candidato.get("estado")
-            if uf_primaria and uf_candidato and uf_primaria != uf_candidato:
-                continue
-
             score = _similaridade(primaria["orgao"], candidato["orgao"])
             if score > melhor_score:
                 melhor_score, melhor_match = score, candidato
@@ -148,40 +163,67 @@ def mesclar_duplicatas(db) -> dict:
             continue
 
         pci_usados.add(melhor_match["id"])
+        candidatos.append({
+            "primaria_id":     primaria["id"],
+            "primaria_orgao":  primaria["orgao"],
+            "primaria_estado": primaria.get("estado"),
+            "primaria_vagas":  primaria.get("total_vagas"),
+            "pci_id":          melhor_match["id"],
+            "pci_orgao":       melhor_match["orgao"],
+            "pci_estado":      melhor_match.get("estado"),
+            "pci_vagas":       melhor_match.get("total_vagas"),
+            "score":           melhor_score,
+        })
 
-        atualizacoes = {}
-        if not primaria.get("total_vagas") and melhor_match.get("total_vagas"):
-            atualizacoes["total_vagas"] = melhor_match["total_vagas"]
-            resultado["vagas_preenchidas"] += 1
+    return candidatos
 
-        try:
-            if atualizacoes:
-                db.table("concursos").update(atualizacoes).eq("id", primaria["id"]).execute()
-            db.table("concursos").update({
-                "oculto": True,
-                "mesclado_com": primaria["id"],
-            }).eq("id", melhor_match["id"]).execute()
-            resultado["mesclados"] += 1
-            log.info(
-                f"  = '{primaria['orgao'][:40]}' <- PCI '{melhor_match['orgao'][:40]}' "
-                f"(similaridade {melhor_score:.2f}"
-                + (f", vagas preenchidas: {atualizacoes['total_vagas']}" if atualizacoes else "")
-                + ")"
-            )
-        except Exception as e:
-            log.warning(f"[Mesclagem] Erro ao mesclar linha {primaria['id']}: {e}")
 
-    log.info(
-        f"[Mesclagem] Total: {resultado['mesclados']} duplicatas mescladas, "
-        f"{resultado['vagas_preenchidas']} vagas preenchidas"
-    )
-    return resultado
+def gerar_relatorio(db, salvar_em: str = "relatorio_mesclagem.txt") -> list[dict]:
+    """
+    Gera e loga um relatório de candidatos a mesclagem — SÓ LEITURA, nunca
+    escreve no banco. Seguro pra rodar automaticamente em toda execução do
+    scraper. Salva também em arquivo texto pra facilitar copiar os IDs.
+    """
+    candidatos = encontrar_candidatos(db)
+
+    if not candidatos:
+        log.info("[Mesclagem] Nenhum candidato a duplicata encontrado.")
+        return []
+
+    linhas_relatorio = [
+        f"{len(candidatos)} candidatos a mesclagem encontrados — REVISE ANTES DE APLICAR.",
+        "Rode: python scraper/aplicar_mesclagem.py <pci_id_1> <pci_id_2> ... só com os aprovados.",
+        "=" * 100,
+    ]
+
+    for c in candidatos:
+        linhas_relatorio.append(
+            f"\nPRIMÁRIA: {c['primaria_orgao'][:60]}\n"
+            f"  estado={c['primaria_estado']} vagas={c['primaria_vagas']}\n"
+            f"PCI:      {c['pci_orgao'][:60]}\n"
+            f"  estado={c['pci_estado']} vagas={c['pci_vagas']}\n"
+            f"  score={c['score']:.2f}  pci_id={c['pci_id']}"
+        )
+
+    texto_final = "\n".join(linhas_relatorio)
+    log.info(f"[Mesclagem] {len(candidatos)} candidatos encontrados — nenhuma escrita feita (relatório apenas)")
+    log.info(f"[Mesclagem] Detalhes salvos em {salvar_em}")
+
+    try:
+        with open(salvar_em, "w", encoding="utf-8") as f:
+            f.write(texto_final)
+    except Exception as e:
+        log.warning(f"[Mesclagem] Não consegui salvar o relatório em arquivo: {e}")
+
+    return candidatos
 
 
 if __name__ == "__main__":
     import os
     logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(message)s")
+    from dotenv import load_dotenv
+    load_dotenv()
     from supabase import create_client
 
     supabase = create_client(os.environ["SUPABASE_URL"], os.environ["SUPABASE_SERVICE_KEY"])
-    mesclar_duplicatas(supabase)
+    gerar_relatorio(supabase)
