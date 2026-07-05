@@ -372,6 +372,11 @@ class QuadrixScraper:
             data_encerramento = item["data_encerramento"] or detalhe["data_encerramento"]
             total_vagas       = item["vagas_listagem"] or detalhe["total_vagas"]
 
+            # O produto (frontend) só reconhece aberto/previsto/encerrado — não existe
+            # "em_andamento" como status real. Mapeia pra "encerrado" só no campo
+            # salvo (fica fora da busca padrão, mas continua no banco).
+            status_final = "encerrado" if item["status"] == "em_andamento" else item["status"]
+
             concursos.append({
                 "banca":             self.BANCA,
                 "orgao":             orgao,
@@ -379,7 +384,7 @@ class QuadrixScraper:
                 "esfera":            _mapear_esfera(orgao + " " + titulo),
                 "estado":            _extrair_uf(orgao + " " + titulo),
                 "area_conhecimento": _mapear_area(orgao + " " + titulo),
-                "status":            item["status"],
+                "status":            status_final,
                 "total_vagas":       total_vagas,
                 "data_abertura":     data_abertura,
                 "data_encerramento": data_encerramento,
@@ -391,7 +396,7 @@ class QuadrixScraper:
             log.info(
                 f"  + {orgao[:50]} | "
                 f"{_extrair_uf(orgao + ' ' + titulo) or 'BR'} | "
-                f"{item['status']} | "
+                f"{item['status']} (salvo como: {status_final}) | "
                 f"{total_vagas} vagas | "
                 f"{len(detalhe['links_pdf'])} PDFs"
             )

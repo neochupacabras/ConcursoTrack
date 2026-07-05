@@ -47,6 +47,9 @@ export interface Concurso {
   fonte_url:   string
   scraped_em:  string | null
   criado_em:   string
+  // campos de deduplicação entre fontes (PCI vs bancas dedicadas)
+  oculto?:        boolean
+  mesclado_com?:  string | null
   // campos de enriquecimento
   descricao?:   string | null
   links_pdf?:   string | null   // JSON string de [{titulo, url}]

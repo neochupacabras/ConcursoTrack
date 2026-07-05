@@ -15,6 +15,7 @@ export async function getConcursos(params: BuscaParams = {}): Promise<ConcursosL
     .from('concursos')
     .select('*, bancas(sigla, logo_url)', { count: 'exact' })
     .eq('status', status)
+    .eq('oculto', false)
     .order('data_encerramento', { ascending: true })
     .range(from, from + POR_PAGINA - 1)
 
@@ -69,6 +70,7 @@ export async function getConcursosUrgentes(dias = 7) {
     .from('concursos')
     .select('id, slug, titulo, orgao, data_encerramento, total_vagas, area_conhecimento, esfera, estado, status')
     .eq('status', 'aberto')
+    .eq('oculto', false)
     .gte('data_encerramento', hoje)
     .lte('data_encerramento', limite)
     .order('data_encerramento', { ascending: true })

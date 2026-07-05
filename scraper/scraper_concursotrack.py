@@ -38,6 +38,30 @@ try:
 except ImportError:
     FCC_DISPONIVEL = False
 
+try:
+    from consulplan import ConsulplanScraper
+    CONSULPLAN_DISPONIVEL = True
+except ImportError:
+    CONSULPLAN_DISPONIVEL = False
+
+try:
+    from quadrix import QuadrixScraper
+    QUADRIX_DISPONIVEL = True
+except ImportError:
+    QUADRIX_DISPONIVEL = False
+
+try:
+    from avalia import AvaliaScraper
+    AVALIA_DISPONIVEL = True
+except ImportError:
+    AVALIA_DISPONIVEL = False
+
+try:
+    from mesclar_duplicatas import mesclar_duplicatas
+    MESCLAGEM_DISPONIVEL = True
+except ImportError:
+    MESCLAGEM_DISPONIVEL = False
+
 load_dotenv()
 logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(message)s")
 log = logging.getLogger(__name__)
@@ -487,7 +511,71 @@ def main():
         else:
             log.info("[Fase 3] FCC não disponível (fcc.py ausente)")
 
+        if CONSULPLAN_DISPONIVEL:
+            log.info("[Fase 3] Instituto Consulplan...")
+            try:
+                consulplan_scraper = ConsulplanScraper(http)
+                concursos_consulplan = consulplan_scraper.scrape()
+                for c in concursos_consulplan:
+                    slug   = fazer_slug(c["orgao"], c["fonte_url"])
+                    res_ex = supabase.table("concursos").select("id").eq("slug", slug).limit(1).execute()
+                    eh_novo = not bool(res_ex.data)
+                    cid = writer.salvar_banca(c)
+                    if cid and eh_novo:
+                        novos_ids.append(cid)
+                log.info(f"[Fase 3] Consulplan: {len(concursos_consulplan)} concursos processados")
+            except Exception as e:
+                log.error(f"[Fase 3] Erro Consulplan: {e}")
+        else:
+            log.info("[Fase 3] Consulplan não disponível (consulplan.py ausente)")
+
+        if QUADRIX_DISPONIVEL:
+            log.info("[Fase 3] Quadrix...")
+            try:
+                quadrix_scraper = QuadrixScraper(http)
+                concursos_quadrix = quadrix_scraper.scrape()
+                for c in concursos_quadrix:
+                    slug   = fazer_slug(c["orgao"], c["fonte_url"])
+                    res_ex = supabase.table("concursos").select("id").eq("slug", slug).limit(1).execute()
+                    eh_novo = not bool(res_ex.data)
+                    cid = writer.salvar_banca(c)
+                    if cid and eh_novo:
+                        novos_ids.append(cid)
+                log.info(f"[Fase 3] Quadrix: {len(concursos_quadrix)} concursos processados")
+            except Exception as e:
+                log.error(f"[Fase 3] Erro Quadrix: {e}")
+        else:
+            log.info("[Fase 3] Quadrix não disponível (quadrix.py ausente)")
+
+        if AVALIA_DISPONIVEL:
+            log.info("[Fase 3] Instituto Avalia...")
+            try:
+                avalia_scraper = AvaliaScraper(http)
+                concursos_avalia = avalia_scraper.scrape()
+                for c in concursos_avalia:
+                    slug   = fazer_slug(c["orgao"], c["fonte_url"])
+                    res_ex = supabase.table("concursos").select("id").eq("slug", slug).limit(1).execute()
+                    eh_novo = not bool(res_ex.data)
+                    cid = writer.salvar_banca(c)
+                    if cid and eh_novo:
+                        novos_ids.append(cid)
+                log.info(f"[Fase 3] Avalia: {len(concursos_avalia)} concursos processados")
+            except Exception as e:
+                log.error(f"[Fase 3] Erro Avalia: {e}")
+        else:
+            log.info("[Fase 3] Avalia não disponível (avalia.py ausente)")
+
     disparar_alertas(supabase, novos_ids)
+
+    if MESCLAGEM_DISPONIVEL:
+        log.info("[Fase 4] Mesclando duplicatas entre PCI e bancas dedicadas...")
+        try:
+            mesclar_duplicatas(supabase)
+        except Exception as e:
+            log.error(f"[Fase 4] Erro na mesclagem: {e}")
+    else:
+        log.info("[Fase 4] Mesclagem não disponível (mesclar_duplicatas.py ausente)")
+
     log.info("=== Scraper v5 finalizado ===")
 
 
