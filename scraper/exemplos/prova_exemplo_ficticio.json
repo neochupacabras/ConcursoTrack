@@ -1,0 +1,49 @@
+{
+  "prova": {
+    "banca_sigla": "EXEMPLO-TESTE",
+    "orgao_nome": "Órgão Fictício de Teste",
+    "esfera": "estadual",
+    "estado": "BA",
+    "cargo": "Cargo de Teste",
+    "ano": 2023,
+    "escolaridade": "Superior"
+  },
+  "questoes": [
+    {
+      "numero": 1,
+      "materia": "Direito Administrativo",
+      "assunto": "Atos Administrativos",
+      "subassunto": "Elementos do Ato",
+      "texto_apoio": null,
+      "enunciado": "[EXEMPLO FICTÍCIO] Sobre os elementos do ato administrativo, é correto afirmar que...",
+      "alternativas": {
+        "A": "Alternativa fictícia A",
+        "B": "Alternativa fictícia B",
+        "C": "Alternativa fictícia C (correta)",
+        "D": "Alternativa fictícia D",
+        "E": "Alternativa fictícia E"
+      },
+      "gabarito": "C",
+      "anulada": false,
+      "premium": false
+    },
+    {
+      "numero": 2,
+      "materia": "Direito Administrativo",
+      "assunto": "Atos Administrativos",
+      "subassunto": null,
+      "texto_apoio": null,
+      "enunciado": "[EXEMPLO FICTÍCIO] Questão de teste número 2...",
+      "alternativas": {
+        "A": "Fictícia A",
+        "B": "Fictícia B (correta)",
+        "C": "Fictícia C",
+        "D": "Fictícia D",
+        "E": "Fictícia E"
+      },
+      "gabarito": "B",
+      "anulada": false,
+      "premium": true
+    }
+  ]
+}

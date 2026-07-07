@@ -95,17 +95,54 @@ export interface Alerta {
 
 // --------------- Simulados ---------------
 
+export interface Orgao {
+  id: string
+  nome: string
+  esfera: Esfera | null
+  estado: string | null
+  criado_em: string
+}
+
+export interface Materia {
+  id: string
+  nome: string
+}
+
+export interface Topico {
+  id: string
+  materia_id: string
+  parent_id: string | null
+  nome: string
+}
+
+export interface Prova {
+  id: string
+  banca_id: string | null
+  orgao_id: string | null
+  concurso_id: string | null
+  cargo: string | null
+  ano: number | null
+  escolaridade: string | null
+  area_conhecimento: string | null
+  criado_em: string
+}
+
 export type Alternativas = Record<'A' | 'B' | 'C' | 'D' | 'E', string>
 
 export interface Questao {
   id: string
   concurso_id: string | null
+  prova_id: string | null
+  numero: number | null
   enunciado: string
+  texto_apoio: string | null
   alternativas: Alternativas
   gabarito: string
   materia: string | null
+  topico_id: string | null
   banca_sigla: string | null
   ano: number | null
+  anulada: boolean
   premium: boolean
   criado_em: string
 }
