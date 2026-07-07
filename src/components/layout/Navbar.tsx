@@ -117,6 +117,9 @@ export function Navbar() {
                   <Link href="/dashboard" className="block px-3 py-2 text-sm text-slate-700 hover:bg-slate-50 transition" onClick={() => setUserMenu(false)}>
                     Painel
                   </Link>
+                  <Link href="/perfil" className="block px-3 py-2 text-sm text-slate-700 hover:bg-slate-50 transition" onClick={() => setUserMenu(false)}>
+                    Meu perfil
+                  </Link>
                   <Link href="/alertas" className="block px-3 py-2 text-sm text-slate-700 hover:bg-slate-50 transition" onClick={() => setUserMenu(false)}>
                     Alertas
                   </Link>
@@ -126,6 +129,11 @@ export function Navbar() {
                   <Link href="/plano" className="block px-3 py-2 text-sm text-slate-700 hover:bg-slate-50 transition" onClick={() => setUserMenu(false)}>
                     Plano
                   </Link>
+                  {user.user_metadata?.role === 'admin' && (
+                    <Link href="/admin" className="block px-3 py-2 text-sm text-slate-700 hover:bg-slate-50 transition" onClick={() => setUserMenu(false)}>
+                      Painel admin
+                    </Link>
+                  )}
                   <div className="border-t border-slate-50 mt-1 pt-1">
                     <button onClick={sair} className="w-full text-left px-3 py-2 text-sm text-slate-500 hover:bg-slate-50 transition">
                       Sair
@@ -179,9 +187,13 @@ export function Navbar() {
                   <span className="text-xs text-slate-500 truncate">{user.email}</span>
                 </div>
                 <Link href="/dashboard"  className="block px-3 py-2 rounded-lg text-sm text-slate-700 hover:bg-slate-50" onClick={() => setMenu(false)}>Painel</Link>
+                <Link href="/perfil"     className="block px-3 py-2 rounded-lg text-sm text-slate-700 hover:bg-slate-50" onClick={() => setMenu(false)}>Meu perfil</Link>
                 <Link href="/alertas"    className="block px-3 py-2 rounded-lg text-sm text-slate-700 hover:bg-slate-50" onClick={() => setMenu(false)}>Alertas</Link>
                 <Link href="/simulados"  className="block px-3 py-2 rounded-lg text-sm text-slate-700 hover:bg-slate-50" onClick={() => setMenu(false)}>Simulados</Link>
                 <Link href="/plano"      className="block px-3 py-2 rounded-lg text-sm text-slate-700 hover:bg-slate-50" onClick={() => setMenu(false)}>Plano</Link>
+                {user.user_metadata?.role === 'admin' && (
+                  <Link href="/admin" className="block px-3 py-2 rounded-lg text-sm text-slate-700 hover:bg-slate-50" onClick={() => setMenu(false)}>Painel admin</Link>
+                )}
                 <button onClick={sair}  className="w-full text-left px-3 py-2 rounded-lg text-sm text-slate-500 hover:bg-slate-50">Sair</button>
               </>
             ) : (

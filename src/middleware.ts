@@ -31,6 +31,7 @@ export async function middleware(request: NextRequest) {
   // Rotas autenticadas
   const rotasAuth = [
     '/dashboard',
+    '/perfil',
     '/simulados',
     '/alertas',
     '/plano/sucesso',
